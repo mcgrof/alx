@@ -2,7 +2,10 @@
 
 The puropose of this development tree is to enable us to do development
 on alx for both BSD and Linux with a single unified repository. This enables
-us to synchronize fixes for both BSD and Linux.
+us to synchronize fixes for both BSD and Linux. The idea is to help end
+typical proprietary driver development for good:
+
+http://www.youtube.com/watch?v=9P-r3H0bY8c
 
 # Linux support
 
