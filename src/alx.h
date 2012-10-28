@@ -17,756 +17,652 @@
 #ifndef _ALX_H_
 #define _ALX_H_
 
-#include <linux/types.h>
 #include <linux/module.h>
 #include <linux/pci.h>
-#include <linux/netdevice.h>
-#include <linux/vmalloc.h>
-#include <linux/string.h>
-#include <linux/in.h>
 #include <linux/interrupt.h>
 #include <linux/ip.h>
-#include <linux/tcp.h>
-#include <linux/sctp.h>
-#include <linux/pkt_sched.h>
 #include <linux/ipv6.h>
-#include <linux/slab.h>
-#include <net/checksum.h>
-#include <net/ip6_checksum.h>
-#include <linux/ethtool.h>
 #include <linux/if_vlan.h>
 #include <linux/mii.h>
-#include <linux/cpumask.h>
 #include <linux/aer.h>
-#include <asm/byteorder.h>
+#include <linux/bitops.h>
+#include <linux/ethtool.h>
+#include <linux/crc32.h>
+#include <linux/mdio.h>
+#include "alx_hw.h"
 
-#include "alx_sw.h"
+/* specific error info */
+#define ALX_ERR_SUCCESS          0x0000
+#define ALX_ERR_ALOAD            0x0001
+#define ALX_ERR_RSTMAC           0x0002
+#define ALX_ERR_PARM             0x0003
+#define ALX_ERR_MIIBUSY          0x0004
 
-/*
- * Definition to enable some features
+
+/* Transmit Packet Descriptor, contains 4 32-bit words.
+ *
+ *   31               16               0
+ *   +----------------+----------------+
+ *   |    vlan-tag    |   buf length   |
+ *   +----------------+----------------+
+ *   |              Word 1             |
+ *   +----------------+----------------+
+ *   |      Word 2: buf addr lo        |
+ *   +----------------+----------------+
+ *   |      Word 3: buf addr hi        |
+ *   +----------------+----------------+
+ *
+ * Word 2 and 3 combine to form a 64-bit buffer address
+ *
+ * Word 1 has three forms, depending on the state of bit 8/12/13:
+ * if bit8 =='1', the definition is just for custom checksum offload.
+ * if bit8 == '0' && bit12 == '1' && bit13 == '1', the *FIRST* descriptor
+ *     for the skb is special for LSO V2, Word 2 become total skb length ,
+ *     Word 3 is meaningless.
+ * other condition, the definition is for general skb or ip/tcp/udp
+ *     checksum or LSO(TSO) offload.
+ *
+ * Here is the depiction:
+ *
+ *   0-+                                  0-+
+ *   1 |                                  1 |
+ *   2 |                                  2 |
+ *   3 |    Payload offset                3 |    L4 header offset
+ *   4 |        (7:0)                     4 |        (7:0)
+ *   5 |                                  5 |
+ *   6 |                                  6 |
+ *   7-+                                  7-+
+ *   8      Custom csum enable = 1        8      Custom csum enable = 0
+ *   9      General IPv4 checksum         9      General IPv4 checksum
+ *   10     General TCP checksum          10     General TCP checksum
+ *   11     General UDP checksum          11     General UDP checksum
+ *   12     Large Send Segment enable     12     Large Send Segment enable
+ *   13     Large Send Segment type       13     Large Send Segment type
+ *   14     VLAN tagged                   14     VLAN tagged
+ *   15     Insert VLAN tag               15     Insert VLAN tag
+ *   16     IPv4 packet                   16     IPv4 packet
+ *   17     Ethernet frame type           17     Ethernet frame type
+ *   18-+                                 18-+
+ *   19 |                                 19 |
+ *   20 |                                 20 |
+ *   21 |   Custom csum offset            21 |
+ *   22 |       (25:18)                   22 |
+ *   23 |                                 23 |   MSS (30:18)
+ *   24 |                                 24 |
+ *   25-+                                 25 |
+ *   26-+                                 26 |
+ *   27 |                                 27 |
+ *   28 |   Reserved                      28 |
+ *   29 |                                 29 |
+ *   30-+                                 30-+
+ *   31     End of packet                 31     End of packet
  */
-#undef CONFIG_ALX_MSIX
-#undef CONFIG_ALX_MSI
-#undef CONFIG_ALX_MTQ
-#undef CONFIG_ALX_MRQ
-#undef CONFIG_ALX_RSS
-/* #define CONFIG_ALX_MSIX */
-#define CONFIG_ALX_MSI
-#define CONFIG_ALX_MTQ
-#define CONFIG_ALX_MRQ
-#ifdef CONFIG_ALX_MRQ
-#define CONFIG_ALX_RSS
-#endif
 
-#define ALX_MSG_DEFAULT         0
+struct tpd_desc {
+	__le32 word0;
+	__le32 word1;
+	union {
+		__le64 addr;
+		struct {
+			__le32 pkt_len;
+			__le32 resvd;
+		} l;
+	} adrl;
+} __packed;
 
-/* Logging functions and macros */
-#define alx_err(adpt, fmt, ...)	\
-	netdev_err(adpt->netdev, fmt, ##__VA_ARGS__)
+/* tpd word 0 */
+#define TPD_BUFLEN_MASK			0xFFFF
+#define TPD_BUFLEN_SHIFT		0
+#define TPD_VLTAG_MASK			0xFFFF
+#define TPD_VLTAG_SHIFT			16
 
-#define ALX_VLAN_TO_TAG(_vlan, _tag) \
-	do { \
-		_tag =  ((((_vlan) >> 8) & 0xFF) | (((_vlan) & 0xFF) << 8)); \
-	} while (0)
+/* tpd word 1 */
+#define TPD_CXSUMSTART_MASK		0x00FF
+#define TPD_CXSUMSTART_SHIFT		0
+#define TPD_L4HDROFFSET_MASK		0x00FF
+#define TPD_L4HDROFFSET_SHIFT		0
+#define TPD_CXSUM_EN_MASK		0x0001
+#define TPD_CXSUM_EN_SHIFT		8
+#define TPD_IP_XSUM_MASK		0x0001
+#define TPD_IP_XSUM_SHIFT		9
+#define TPD_TCP_XSUM_MASK		0x0001
+#define TPD_TCP_XSUM_SHIFT		10
+#define TPD_UDP_XSUM_MASK		0x0001
+#define TPD_UDP_XSUm_SHIFT		11
+#define TPD_LSO_EN_MASK			0x0001
+#define TPD_LSO_EN_SHIFT		12
+#define TPD_LSO_V2_MASK			0x0001
+#define TPD_LSO_V2_SHIFT		13
+#define TPD_VLTAGGED_MASK		0x0001
+#define TPD_VLTAGGED_SHIFT		14
+#define TPD_INS_VLTAG_MASK		0x0001
+#define TPD_INS_VLTAG_SHIFT		15
+#define TPD_IPV4_MASK			0x0001
+#define TPD_IPV4_SHIFT			16
+#define TPD_ETHTYPE_MASK		0x0001
+#define TPD_ETHTYPE_SHIFT		17
+#define TPD_CXSUMOFFSET_MASK		0x00FF
+#define TPD_CXSUMOFFSET_SHIFT		18
+#define TPD_MSS_MASK			0x1FFF
+#define TPD_MSS_SHIFT			18
+#define TPD_EOP_MASK			0x0001
+#define TPD_EOP_SHIFT			31
 
-#define ALX_TAG_TO_VLAN(_tag, _vlan) \
-	do { \
-		_vlan = ((((_tag) >> 8) & 0xFF) | (((_tag) & 0xFF) << 8)) ; \
-	} while (0)
+#define DESC_GET(_x, _name) ((_x) >> _name##SHIFT & _name##MASK)
 
-/* Coalescing Message Block */
-struct coals_msg_block {
-	int test;
+/* Receive Free Descriptor */
+struct rfd_desc {
+	__le64 addr;		/* data buffer address, length is
+				 * declared in register --- every
+				 * buffer has the same size
+				 */
+} __packed;
+
+/* Receive Return Descriptor, contains 4 32-bit words.
+ *
+ *   31               16               0
+ *   +----------------+----------------+
+ *   |              Word 0             |
+ *   +----------------+----------------+
+ *   |     Word 1: RSS Hash value      |
+ *   +----------------+----------------+
+ *   |              Word 2             |
+ *   +----------------+----------------+
+ *   |              Word 3             |
+ *   +----------------+----------------+
+ *
+ * Word 0 depiction         &            Word 2 depiction:
+ *
+ *   0--+                                 0--+
+ *   1  |                                 1  |
+ *   2  |                                 2  |
+ *   3  |                                 3  |
+ *   4  |                                 4  |
+ *   5  |                                 5  |
+ *   6  |                                 6  |
+ *   7  |    IP payload checksum          7  |     VLAN tag
+ *   8  |         (15:0)                  8  |      (15:0)
+ *   9  |                                 9  |
+ *   10 |                                 10 |
+ *   11 |                                 11 |
+ *   12 |                                 12 |
+ *   13 |                                 13 |
+ *   14 |                                 14 |
+ *   15-+                                 15-+
+ *   16-+                                 16-+
+ *   17 |     Number of RFDs              17 |
+ *   18 |        (19:16)                  18 |
+ *   19-+                                 19 |     Protocol ID
+ *   20-+                                 20 |      (23:16)
+ *   21 |                                 21 |
+ *   22 |                                 22 |
+ *   23 |                                 23-+
+ *   24 |                                 24 |     Reserved
+ *   25 |     Start index of RFD-ring     25-+
+ *   26 |         (31:20)                 26 |     RSS Q-num (27:25)
+ *   27 |                                 27-+
+ *   28 |                                 28-+
+ *   29 |                                 29 |     RSS Hash algorithm
+ *   30 |                                 30 |      (31:28)
+ *   31-+                                 31-+
+ *
+ * Word 3 depiction:
+ *
+ *   0--+
+ *   1  |
+ *   2  |
+ *   3  |
+ *   4  |
+ *   5  |
+ *   6  |
+ *   7  |    Packet length (include FCS)
+ *   8  |         (13:0)
+ *   9  |
+ *   10 |
+ *   11 |
+ *   12 |
+ *   13-+
+ *   14      L4 Header checksum error
+ *   15      IPv4 checksum error
+ *   16      VLAN tagged
+ *   17-+
+ *   18 |    Protocol ID (19:17)
+ *   19-+
+ *   20      Receive error summary
+ *   21      FCS(CRC) error
+ *   22      Frame alignment error
+ *   23      Truncated packet
+ *   24      Runt packet
+ *   25      Incomplete packet due to insufficient rx-desc
+ *   26      Broadcast packet
+ *   27      Multicast packet
+ *   28      Ethernet type (EII or 802.3)
+ *   29      FIFO overflow
+ *   30      Length error (for 802.3, length field mismatch with actual len)
+ *   31      Updated, indicate to driver that this RRD is refreshed.
+ */
+
+struct rrd_desc {
+	__le32 word0;
+	__le32 rss_hash;
+	__le32 word2;
+	__le32 word3;
+} __packed;
+
+/* rrd word 0 */
+#define RRD_XSUM_MASK		0xFFFF
+#define RRD_XSUM_SHIFT		0
+#define RRD_NOR_MASK		0x000F
+#define RRD_NOR_SHIFT		16
+#define RRD_SI_MASK		0x0FFF
+#define RRD_SI_SHIFT		20
+
+/* rrd word 2 */
+#define RRD_VLTAG_MASK		0xFFFF
+#define RRD_VLTAG_SHIFT		0
+#define RRD_PID_MASK		0x00FF
+#define RRD_PID_SHIFT		16
+#define RRD_PID_NONIP		0	/* non-ip packet */
+#define RRD_PID_IPV4		1	/* ipv4(only) */
+#define RRD_PID_IPV6TCP		2	/* tcp/ipv6 */
+#define RRD_PID_IPV4TCP		3	/* tcp/ipv4 */
+#define RRD_PID_IPV6UDP		4	/* udp/ipv6 */
+#define RRD_PID_IPV4UDP		5	/* udp/ipv4 */
+#define RRD_PID_IPV6		6	/* ipv6(only) */
+#define RRD_PID_LLDP		7	/* LLDP packet */
+#define RRD_PID_1588		8	/* 1588 packet */
+#define RRD_RSSQ_MASK		0x0007
+#define RRD_RSSQ_SHIFT		25
+#define RRD_RSSALG_MASK		0x000F
+#define RRD_RSSALG_SHIFT	28
+#define RRD_RSSALG_TCPV6	0x1	/* TCP(IPV6) hash algorithm */
+#define RRD_RSSALG_IPV6		0x2	/* IPV6 hash algorithm */
+#define RRD_RSSALG_TCPV4	0x4	/* TCP(IPV4) hash algorithm */
+#define RRD_RSSALG_IPV4		0x8	/* IPV4 hash algorithm */
+
+/* rrd word 3 */
+#define RRD_PKTLEN_MASK		0x3FFF
+#define RRD_PKTLEN_SHIFT	0
+#define RRD_ERR_L4_MASK		0x0001
+#define RRD_ERR_L4_SHIFT	14
+#define RRD_ERR_IPV4_MASK	0x0001
+#define RRD_ERR_IPV4_SHIFT	15
+#define RRD_VLTAGGED_MASK	0x0001
+#define RRD_VLTAGGED_SHIFT	16
+#define RRD_OLD_PID_MASK	0x0007
+#define RRD_OLD_PID_SHIFT	17
+#define RRD_ERR_RES_MASK	0x0001
+#define RRD_ERR_RES_SHIFT	20
+#define RRD_ERR_FCS_MASK	0x0001
+#define RRD_ERR_FCS_SHIFT	21
+#define RRD_ERR_FAE_MASK	0x0001
+#define RRD_ERR_FAE_SHIFT	22
+#define RRD_ERR_TRUNC_MASK	0x0001
+#define RRD_ERR_TRUNC_SHIFT	23
+#define RRD_ERR_RUNT_MASK	0x0001
+#define RRD_ERR_RUNT_SHIFT	24
+#define RRD_ERR_ICMP_MASK	0x0001
+#define RRD_ERR_ICMP_SHIFT	25
+#define RRD_BCAST_MASK		0x0001
+#define RRD_BCAST_SHIFT		26
+#define RRD_MCAST_MASK		0x0001
+#define RRD_MCAST_SHIFT		27
+#define RRD_ETHTYPE_MASK	0x0001
+#define RRD_ETHTYPE_SHIFT	28
+#define RRD_ERR_FIFOV_MASK	0x0001
+#define RRD_ERR_FIFOV_SHIFT	29
+#define RRD_ERR_LEN_MASK	0x0001
+#define RRD_ERR_LEN_SHIFT	30
+#define RRD_UPDATED_MASK	0x0001
+#define RRD_UPDATED_SHIFT	31
+
+
+/* Statistics counters collected by the MAC */
+struct alx_hw_stats {
+	/* rx */
+	unsigned long rx_ok;
+	unsigned long rx_bcast;
+	unsigned long rx_mcast;
+	unsigned long rx_pause;
+	unsigned long rx_ctrl;
+	unsigned long rx_fcs_err;
+	unsigned long rx_len_err;
+	unsigned long rx_byte_cnt;
+	unsigned long rx_runt;
+	unsigned long rx_frag;
+	unsigned long rx_sz_64B;
+	unsigned long rx_sz_127B;
+	unsigned long rx_sz_255B;
+	unsigned long rx_sz_511B;
+	unsigned long rx_sz_1023B;
+	unsigned long rx_sz_1518B;
+	unsigned long rx_sz_max;
+	unsigned long rx_ov_sz;
+	unsigned long rx_ov_rxf;
+	unsigned long rx_ov_rrd;
+	unsigned long rx_align_err;
+	unsigned long rx_bc_byte_cnt;
+	unsigned long rx_mc_byte_cnt;
+	unsigned long rx_err_addr;
+
+	/* tx */
+	unsigned long tx_ok;
+	unsigned long tx_bcast;
+	unsigned long tx_mcast;
+	unsigned long tx_pause;
+	unsigned long tx_exc_defer;
+	unsigned long tx_ctrl;
+	unsigned long tx_defer;
+	unsigned long tx_byte_cnt;
+	unsigned long tx_sz_64B;
+	unsigned long tx_sz_127B;
+	unsigned long tx_sz_255B;
+	unsigned long tx_sz_511B;
+	unsigned long tx_sz_1023B;
+	unsigned long tx_sz_1518B;
+	unsigned long tx_sz_max;
+	unsigned long tx_single_col;
+	unsigned long tx_multi_col;
+	unsigned long tx_late_col;
+	unsigned long tx_abort_col;
+	unsigned long tx_underrun;
+	unsigned long tx_trd_eop;
+	unsigned long tx_len_err;
+	unsigned long tx_trunc;
+	unsigned long tx_bc_byte_cnt;
+	unsigned long tx_mc_byte_cnt;
+	unsigned long update;
 };
 
+#define SPEED_0			0
+#define HALF_DUPLEX		1
+#define FULL_DUPLEX		2
+#define ALX_MAX_SETUP_LNK_CYCLE	50
 
-#define BAR_0   0
+#define ALX_SPEED_TO_ETHADV(_speed) (\
+(_speed) == SPEED_1000 + FULL_DUPLEX ? ADVERTISED_1000baseT_Full :	\
+(_speed) == SPEED_100 + FULL_DUPLEX ? ADVERTISED_100baseT_Full :	\
+(_speed) == SPEED_100 + HALF_DUPLEX ? ADVERTISED_10baseT_Half :		\
+(_speed) == SPEED_10 + FULL_DUPLEX ? ADVERTISED_10baseT_Full :		\
+(_speed) == SPEED_10 + HALF_DUPLEX ? ADVERTISED_10baseT_Half :		\
+0)
 
-#define ALX_DEF_RX_BUF_SIZE	1536
+
+#define ALX_DEF_RXBUF_SIZE	1536
 #define ALX_MAX_JUMBO_PKT_SIZE	(9*1024)
 #define ALX_MAX_TSO_PKT_SIZE	(7*1024)
+#define ALX_MAX_FRAME_SIZE	ALX_MAX_JUMBO_PKT_SIZE
+#define ALX_MIN_FRAME_SIZE	68
+#define ALX_RAW_MTU(_mtu)	(_mtu + ETH_HLEN + ETH_FCS_LEN + VLAN_HLEN)
 
-#define ALX_MAX_ETH_FRAME_SIZE	ALX_MAX_JUMBO_PKT_SIZE
-#define ALX_MIN_ETH_FRAME_SIZE	68
-
-
-#define ALX_MAX_RX_QUEUES	8
-#define ALX_MAX_TX_QUEUES	4
+#define ALX_MAX_RX_QUEUES	8	/* for RSS */
+#define ALX_MAX_TX_QUEUES	4	/* multiple tx queues */
 #define ALX_MAX_HANDLED_INTRS	5
 
+#define ALX_ISR_MISC		(\
+	ALX_ISR_PCIE_LNKDOWN | \
+	ALX_ISR_PHY | \
+	ALX_ISR_DMAW | \
+	ALX_ISR_DMAR | \
+	ALX_ISR_SMB | \
+	ALX_ISR_MANU | \
+	ALX_ISR_TIMER | \
+	ALX_ISR_RXF_OV | \
+	ALX_ISR_TXF_UR | \
+	ALX_ISR_RFD_UR)
+
+#define ALX_ISR_FATAL	(\
+	ALX_ISR_PCIE_LNKDOWN | \
+	 ALX_ISR_DMAW | \
+	 ALX_ISR_DMAR)
+
+#define ALX_ISR_ALERT	(\
+	ALX_ISR_RXF_OV | \
+	ALX_ISR_TXF_UR | \
+	ALX_ISR_RFD_UR)
+
+#define ALX_ISR_ALL_QUEUES (\
+	ALX_ISR_TX_Q0 | \
+	ALX_ISR_TX_Q1 | \
+	ALX_ISR_TX_Q2 | \
+	ALX_ISR_TX_Q3 | \
+	ALX_ISR_RX_Q0 | \
+	ALX_ISR_RX_Q1 | \
+	ALX_ISR_RX_Q2 | \
+	ALX_ISR_RX_Q3 | \
+	ALX_ISR_RX_Q4 | \
+	ALX_ISR_RX_Q5 | \
+	ALX_ISR_RX_Q6 | \
+	ALX_ISR_RX_Q7)
+
+#define ALX_MAX_MSIX_INTRS	16	/* maximum interrupt vectors for msix */
 #define ALX_WATCHDOG_TIME   (5 * HZ)
 
-struct alx_cmb {
-	char name[IFNAMSIZ + 9];
-	void *cmb;
-	dma_addr_t dma;
-};
-struct alx_smb {
-	char name[IFNAMSIZ + 9];
-	void *smb;
-	dma_addr_t dma;
-};
-
-
 /*
- * RRD : definition
- */
-
-/* general parameter format of rrd */
-struct alx_sw_rrdes_general {
-#if defined(__LITTLE_ENDIAN_BITFIELD)
-	/* dword 0 */
-	u32  xsum:16;
-	u32  nor:4;  /* number of RFD */
-	u32  si:12;  /* start index of rfd-ring */
-	/* dword 1 */
-	u32 hash;
-	/* dword 2 */
-	u32 vlan_tag:16; /* vlan-tag */
-	u32 pid:8;       /* Header Length of Header-Data Split. WORD unit */
-	u32 reserve0:1;
-	u32 rss_cpu:3;   /* CPU number used by RSS */
-	u32 rss_flag:4;  /* rss_flag 0, TCP(IPv6) flag for RSS hash algrithm
-			  * rss_flag 1, IPv6 flag for RSS hash algrithm
-			  * rss_flag 2, TCP(IPv4) flag for RSS hash algrithm
-			  * rss_flag 3, IPv4 flag for RSS hash algrithm */
-	/* dword 3 */
-	u32 pkt_len:14;  /* length of the packet */
-	u32 l4f:1;       /* L4(TCP/UDP) checksum failed */
-	u32 ipf:1;       /* IP checksum failed */
-	u32 vlan_flag:1; /* vlan tag */
-	u32 reserve:3;
-	u32 res:1;       /* received error summary */
-	u32 crc:1;       /* crc error */
-	u32 fae:1;       /* frame alignment error */
-	u32 trunc:1;     /* truncated packet, larger than MTU */
-	u32 runt:1;      /* runt packet */
-	u32 icmp:1;      /* incomplete packet due to insufficient rx-desc*/
-	u32 bar:1;       /* broadcast address received */
-	u32 mar:1;       /* multicast address received */
-	u32 type:1;      /* ethernet type */
-	u32 fov:1;       /* fifo overflow*/
-	u32 lene:1;      /* length error */
-	u32 update:1;    /* update*/
-#elif defined(__BIG_ENDIAN_BITFIELD)
-	/* dword 0 */
-	u32  si:12;
-	u32  nor:4;
-	u32  xsum:16;
-	/* dword 1 */
-	u32 hash;
-	/* dword 2 */
-	u32 rss_flag:4;
-	u32 rss_cpu:3;	
-	u32 reserve0:1;
-	u32 pid:8;
-	u32 vlan_tag:16;
-	/* dword 3 */
-	u32 update:1;
-	u32 lene:1;
-	u32 fov:1;
-	u32 type:1;
-	u32 mar:1;
-	u32 bar:1;
-	u32 icmp:1;
-	u32 runt:1;
-	u32 trunc:1;
-	u32 fae:1;
-	u32 crc:1;
-	u32 res:1;
-	u32 reserve1:3;
-	u32 vlan_flag:1;
-	u32 ipf:1;
-	u32 l4f:1;
-	u32 pkt_len:14;
-#else
-#error	"Please fix <asm/byteorder.h>"
-#endif
-};
-
-union alx_hw_rrdesc {
-	/* dword flat format */
-	struct {
-		__le32 dw0;
-		__le32 dw1;
-		__le32 dw2;
-		__le32 dw3;
-	} dfmt;
-
-	/* qword flat format */
-	struct {
-		__le64 qw0;
-		__le64 qw1;
-	} qfmt;
-};
-
-/*
- * XXX: we should not use this guy, best to just
- * do all le32_to_cpu() conversions on the spot.
- */
-union alx_sw_rrdesc {
-	struct alx_sw_rrdes_general genr;
-
-	/* dword flat format */
-	struct {
-		u32 dw0;
-		u32 dw1;
-		u32 dw2;
-		u32 dw3;
-	} dfmt;
-
-	/* qword flat format */
-	struct {
-		u64 qw0;
-		u64 qw1;
-	} qfmt;
-};
-
-/*
- * RFD : definition
- */
-
-/* general parameter format of rfd */
-struct alx_sw_rfdes_general {
-	u64   addr;
-};
-
-union alx_hw_rfdesc {
-	/* dword flat format */
-	struct {
-		__le32 dw0;
-		__le32 dw1;
-	} dfmt;
-
-	/* qword flat format */
-	struct {
-		__le64 qw0;
-	} qfmt;
-};
-
-/*
- * XXX: we should not use this guy, best to just
- * do all le32_to_cpu() conversions on the spot.
- */
-union alx_sw_rfdesc {
-	struct alx_sw_rfdes_general genr;
-
-	/* dword flat format */
-	struct {
-		u32 dw0;
-		u32 dw1;
-	} dfmt;
-
-	/* qword flat format */
-	struct {
-		u64 qw0;
-	} qfmt;
-};
-
-/*
- * TPD : definition
- */
-
-/* general parameter format of tpd */
-struct alx_sw_tpdes_general {
-#if defined(__LITTLE_ENDIAN_BITFIELD)
-	/* dword 0 */
-	u32  buffer_len:16; /* include 4-byte CRC */
-	u32  vlan_tag:16;
-	/* dword 1 */
-	u32  l4hdr_offset:8; /* l4 header offset to the 1st byte of packet */
-	u32  c_csum:1;
-	u32  ip_csum:1;
-	u32  tcp_csum:1;
-	u32  udp_csum:1;
-	u32  lso:1;
-	u32  lso_v2:1;
-	u32  vtagged:1;   /* vlan-id tagged already */
-	u32  instag:1;    /* insert vlan tag */
-
-	u32  ipv4:1;      /* ipv4 packet */
-	u32  type:1;      /* type of packet (ethernet_ii(0) or snap(1)) */
-	u32  reserve:12;
-	u32  epad:1;      /* even byte padding when this packet */
-	u32  last_frag:1; /* last fragment(buffer) of the packet */
-
-	u64  addr;
-#elif defined(__BIG_ENDIAN_BITFIELD)
-	/* dword 0 */
-	u32  vlan_tag:16;
-	u32  buffer_len:16;
-	/* dword 1 */
-	u32  last_frag:1;
-	u32  epad:1;
-	u32  reserve:12;
-	u32  type:1;
-	u32  ipv4:1;
-	u32  instag:1;
-	u32  vtagged:1;
-	u32  lso_v2:1;
-	u32  lso:1;
-	u32  udp_csum:1;
-	u32  tcp_csum:1;	
-	u32  ip_csum:1;
-	u32  c_csum:1;
-	u32  l4hdr_offset:8;
-
-	u64  addr;
-#else
-#error	"Please fix <asm/byteorder.h>"
-#endif
-};
-
-/* custom checksum parameter format of tpd */
-struct alx_sw_tpdes_checksum {
-#if defined(__LITTLE_ENDIAN_BITFIELD)
-	/* dword 0 */
-	u32  buffer_len:16;
-	u32  vlan_tag:16;
-	/* dword 1 */
-	u32  payld_offset:8; /* payload offset to the 1st byte of packet */
-	u32  c_csum:1;    /* do custom checksum offload */
-	u32  ip_csum:1;   /* do ip(v4) header checksum offload */
-	u32  tcp_csum:1;  /* do tcp checksum offload, both ipv4 and ipv6 */
-	u32  udp_csum:1;  /* do udp checksum offlaod, both ipv4 and ipv6 */
-	u32  lso:1;
-	u32  lso_v2:1;
-	u32  vtagged:1;   /* vlan-id tagged already */
-	u32  instag:1;    /* insert vlan tag */
-	u32  ipv4:1;      /* ipv4 packet */
-	u32  type:1;      /* type of packet (ethernet_ii(0) or snap(1)) */
-	u32  cxsum_offset:8;  /* checksum offset to the 1st byte of packet */
-	u32  reserve:4;
-	u32  epad:1;      /* even byte padding when this packet */
-	u32  last_frag:1; /* last fragment(buffer) of the packet */
-
-	u64 addr;
-#elif defined(__BIG_ENDIAN_BITFIELD)
-	/* dword 0 */
-	u32  vlan_tag:16;
-	u32  buffer_len:16;
-	/* dword 1 */
-	u32  last_frag:1;
-	u32  epad:1;
-	u32  reserve:4;
-	u32  cxsum_offset:8;
-	u32  type:1;
-	u32  ipv4:1;
-	u32  instag:1;
-	u32  vtagged:1;
-	u32  lso_v2:1;
-	u32  lso:1;
-	u32  udp_csum:1;
-	u32  tcp_csum:1;	
-	u32  ip_csum:1;
-	u32  c_csum:1;
-	u32  payld_offset:8;
-
-	u64  addr;
-#else
-#error	"Please fix <asm/byteorder.h>"
-#endif
-};
-
-
-/* tcp large send format (v1/v2) of tpd */
-struct alx_sw_tpdes_tso {
-#if defined(__LITTLE_ENDIAN_BITFIELD)
-	/* dword 0 */
-	u32  buffer_len:16; /* include 4-byte CRC */
-	u32  vlan_tag:16;
-	/* dword 1 */
-	u32  tcphdr_offset:8; /* tcp hdr offset to the 1st byte of packet */
-	u32  c_csum:1;
-	u32  ip_csum:1;
-	u32  tcp_csum:1;
-	u32  udp_csum:1;
-	u32  lso:1;       /* do tcp large send (ipv4 only) */
-	u32  lso_v2:1;    /* must be 0 in this format */
-	u32  vtagged:1;   /* vlan-id tagged already */
-	u32  instag:1;    /* insert vlan tag */
-	u32  ipv4:1;      /* ipv4 packet */
-	u32  type:1;      /* type of packet (ethernet_ii(1) or snap(0)) */
-	u32  mss:13;      /* mss if do tcp large send */
-	u32  last_frag:1; /* last fragment(buffer) of the packet */
-
-	u32  pkt_len;     /* packet length in ext tpd */
-	u32  reserve;
-#elif defined(__BIG_ENDIAN_BITFIELD)
-	/* dword 0 */
-	u32  vlan_tag:16;
-	u32  buffer_len:16;
-	/* dword 1 */
-	u32  last_frag:1;
-	u32  mss:13;
-	u32  type:1;
-	u32  ipv4:1;
-	u32  instag:1;
-	u32  vtagged:1;
-	u32  lso_v2:1;
-	u32  lso:1;
-	u32  udp_csum:1;
-	u32  tcp_csum:1;	
-	u32  ip_csum:1;
-	u32  c_csum:1;
-	u32  tcphdr_offset:8;
-
-	u32  pkt_len;
-	u32  reserve;
-#else
-#error	"Please fix <asm/byteorder.h>"
-#endif
-};
-
-union alx_hw_tpdesc {
-	/* dword flat format */
-	struct {
-		__le32 dw0;
-		__le32 dw1;
-		__le32 dw2;
-		__le32 dw3;
-	} dfmt;
-
-	/* qword flat format */
-	struct {
-		__le64 qw0;
-		__le64 qw1;
-	} qfmt;
-};
-
-/*
- * XXX: we should not use this guy, best to just
- * do all le32_to_cpu() conversions on the spot.
- */
-union alx_sw_tpdesc {
-	struct alx_sw_tpdes_general   genr;
-	struct alx_sw_tpdes_checksum  csum;
-	struct alx_sw_tpdes_tso       tso;
-
-	/* dword flat format */
-	struct {
-		u32 dw0;
-		u32 dw1;
-		u32 dw2;
-		u32 dw3;
-	} dfmt;
-
-	/* qword flat format */
-	struct {
-		u64 qw0;
-		u64 qw1;
-	} qfmt;
-};
-
-#define ALX_RRD(_que, _i)	\
-		(&(((union alx_hw_rrdesc *)(_que)->rrq.rrdesc)[(_i)]))
-#define ALX_RFD(_que, _i)	\
-		(&(((union alx_hw_rfdesc *)(_que)->rfq.rfdesc)[(_i)]))
-#define ALX_TPD(_que, _i)	\
-		(&(((union alx_hw_tpdesc *)(_que)->tpq.tpdesc)[(_i)]))
-
-
-/*
- * alx_ring_header represents a single, contiguous block of DMA space
- * mapped for the three descriptor rings (tpd, rfd, rrd) and the two
- * message blocks (cmb, smb) described below
+ * alx_ring_header is a single, contiguous block of memory space
+ * used by the three descriptor rings (tpd, rfd, rrd)
  */
 struct alx_ring_header {
-	void        *desc;      /* virtual address */
-	dma_addr_t   dma;       /* physical address*/
-	unsigned int size;      /* length in bytes */
-	unsigned int used;
+	void        *desc;      /* virt addr */
+	dma_addr_t   dma;       /* phy addr */
+	u32          size;      /* length in bytes */
 };
-
 
 /*
- * alx_buffer is wrapper around a pointer to a socket buffer
- * so a DMA handle can be stored along with the skb
+ * alx_buffer wraps around a pointer to a socket buffer
+ * so a DMA physical address can be stored along with the skb
  */
 struct alx_buffer {
-	struct sk_buff *skb;      /* socket buffer */
-	u16             length;   /* rx buffer length */
-	dma_addr_t      dma;
+	struct sk_buff *skb;		/* socket buffer */
+	DEFINE_DMA_UNMAP_ADDR(dma);	/* DMA address */
+	DEFINE_DMA_UNMAP_LEN(size);	/* buffer size */
+	u16		flags;		/* information of this buffer */
 };
-
-struct alx_sw_buffer {
-	struct sk_buff *skb;   /* socket buffer */
-	u32             vlan_tag:16;
-	u32             vlan_flag:1;
-	u32             reserved:15;
-};
-
-/* receive free descriptor (rfd) queue */
-struct alx_rfd_queue {
-	struct alx_buffer   *rfbuff;
-	union alx_hw_rfdesc *rfdesc;   /* virtual address */
-	dma_addr_t         rfdma;    /* physical address */
-	u16 size;          /* length in bytes */
-	u16 count;         /* number of descriptors in the ring */
-	u16 produce_idx;   /* it's written to rxque->produce_reg */
-	u16 consume_idx;   /* unused*/
-};
-
-/* receive return desciptor (rrd) queue */
-struct alx_rrd_queue {
-	union alx_hw_rrdesc *rrdesc;    /* virtual address */
-	dma_addr_t          rrdma;     /* physical address */
-	u16 size;          /* length in bytes */
-	u16 count;         /* number of descriptors in the ring */
-	u16 produce_idx;   /* unused */
-	u16 consume_idx;   /* rxque->consume_reg */
-};
-
-/* software desciptor (swd) queue */
-struct alx_swd_queue {
-	struct alx_sw_buffer *swbuff;
-	u16 count;         /* number of descriptors in the ring */
-	u16 produce_idx;
-	u16 consume_idx;
-};
+#define ALX_BUF_TX_FIRSTFRAG	0x1
 
 /* rx queue */
 struct alx_rx_queue {
-	struct device         *dev;      /* device for dma mapping */
-	struct net_device     *netdev;   /* netdev ring belongs to */
-	struct alx_msix_param *msix;
-	struct alx_rrd_queue   rrq;
-	struct alx_rfd_queue   rfq;
-	struct alx_swd_queue   swq;
+	struct net_device *netdev;
+	struct device *dev;		/* device pointer for dma operation */
+	struct rrd_desc *rrd_hdr;	/* rrd ring virtual addr */
+	dma_addr_t rrd_dma;		/* rrd ring physical addr */
+	struct rfd_desc *rfd_hdr;	/* rfd ring virtual addr */
+	dma_addr_t rfd_dma;		/* rfd ring physical addr */
+	struct alx_buffer *bf_info;	/* info for rx-skbs */
 
-	u16 que_idx;       /* index in multi rx queues*/
-	u16 max_packets;   /* max work per interrupt */
-	u16 produce_reg;
-	u16 consume_reg;
-	u32 flags;
+	u16 count;			/* number of ring elements */
+	u16 pidx;			/* rfd producer index */
+	u16 cidx;			/* rfd consumer index */
+	u16 rrd_cidx;
+	u16 p_reg;			/* register saving producer index */
+	u16 c_reg;			/* register saving consumer index */
+	u16 qidx;			/* queue index */
+	unsigned long flag;
+
+	struct sk_buff_head list;
 };
-#define ALX_RX_FLAG_SW_QUE          0x00000001
-#define ALX_RX_FLAG_HW_QUE          0x00000002
-#define CHK_RX_FLAG(_flag)          CHK_FLAG(rxque, RX, _flag)
-#define SET_RX_FLAG(_flag)          SET_FLAG(rxque, RX, _flag)
-#define CLI_RX_FLAG(_flag)          CLI_FLAG(rxque, RX, _flag)
-
-#define GET_RF_BUFFER(_rque, _i)    (&((_rque)->rfq.rfbuff[(_i)]))
-#define GET_SW_BUFFER(_rque, _i)    (&((_rque)->swq.swbuff[(_i)]))
-
-
-/* transimit packet descriptor (tpd) ring */
-struct alx_tpd_queue {
-	struct alx_buffer   *tpbuff;
-	union alx_hw_tpdesc *tpdesc;   /* virtual address */
-	dma_addr_t         tpdma;    /* physical address */
-
-	u16 size;    /* length in bytes */
-	u16 count;   /* number of descriptors in the ring */
-	u16 produce_idx;
-	u16 consume_idx;
-	u16 last_produce_idx;
-};
-
+#define ALX_RQ_USING		1
+#define ALX_RX_ALLOC_THRESH	32
 /* tx queue */
 struct alx_tx_queue {
-	struct device         *dev;	/* device for dma mapping */
-	struct net_device     *netdev;	/* netdev ring belongs to */
-	struct alx_tpd_queue   tpq;
-	struct alx_msix_param *msix;
-
-	u16 que_idx;       /* needed for multiqueue queue management */
-	u16 max_packets;   /* max packets per interrupt */
-	u16 produce_reg;
-	u16 consume_reg;
-};
-#define GET_TP_BUFFER(_tque, _i)    (&((_tque)->tpq.tpbuff[(_i)]))
-
-
-/*
- * definition for array allocations.
- */
-#define ALX_MAX_MSIX_INTRS              16
-#define ALX_MAX_RX_QUEUES               8
-#define ALX_MAX_TX_QUEUES               4
-
-enum alx_msix_type {
-	alx_msix_type_rx,
-	alx_msix_type_tx,
-	alx_msix_type_other,
-};
-#define ALX_MSIX_TYPE_OTH_TIMER         0
-#define ALX_MSIX_TYPE_OTH_ALERT         1
-#define ALX_MSIX_TYPE_OTH_SMB           2
-#define ALX_MSIX_TYPE_OTH_PHY           3
-
-/* ALX_MAX_MSIX_INTRS of these are allocated,
- * but we only use one per queue-specific vector.
- */
-struct alx_msix_param {
-	struct alx_adapter *adpt;
-	unsigned int        vec_idx; /* index in HW interrupt vector */
-	char                name[IFNAMSIZ + 9];
-
-	/* msix interrupts for queue */
-	u8 rx_map[ALX_MAX_RX_QUEUES];
-	u8 tx_map[ALX_MAX_TX_QUEUES];
-	u8 rx_count;   /* Rx ring count assigned to this vector */
-	u8 tx_count;   /* Tx ring count assigned to this vector */
-
-	struct napi_struct napi;
-	cpumask_var_t      affinity_mask;
-	u32 flags;
+	struct net_device *netdev;
+	struct device *dev;		/* device pointer for dma operation */
+	struct tpd_desc *tpd_hdr;	/* tpd ring virtual addr */
+	dma_addr_t tpd_dma;		/* tpd ring physical addr */
+	struct alx_buffer *bf_info;	/* info for tx-skbs pending on HW */
+	u16 count;			/* number of ring elements  */
+	u16 pidx;			/* producer index */
+	atomic_t cidx;			/* consumer index */
+	u16 p_reg;			/* register saving producer index */
+	u16 c_reg;			/* register saving consumer index */
+	u16 qidx;			/* queue index */
 };
 
-#define ALX_MSIX_FLAG_RX0               0x00000001
-#define ALX_MSIX_FLAG_RX1               0x00000002
-#define ALX_MSIX_FLAG_RX2               0x00000004
-#define ALX_MSIX_FLAG_RX3               0x00000008
-#define ALX_MSIX_FLAG_RX4               0x00000010
-#define ALX_MSIX_FLAG_RX5               0x00000020
-#define ALX_MSIX_FLAG_RX6               0x00000040
-#define ALX_MSIX_FLAG_RX7               0x00000080
-#define ALX_MSIX_FLAG_TX0               0x00000100
-#define ALX_MSIX_FLAG_TX1               0x00000200
-#define ALX_MSIX_FLAG_TX2               0x00000400
-#define ALX_MSIX_FLAG_TX3               0x00000800
-#define ALX_MSIX_FLAG_TIMER             0x00001000
-#define ALX_MSIX_FLAG_ALERT             0x00002000
-#define ALX_MSIX_FLAG_SMB               0x00004000
-#define ALX_MSIX_FLAG_PHY               0x00008000
+#define ALX_TX_WAKEUP_THRESH(_tq) ((_tq)->count / 4)
+#define ALX_DEFAULT_TX_WORK		128
 
-#define ALX_MSIX_FLAG_RXS (\
-		ALX_MSIX_FLAG_RX0       |\
-		ALX_MSIX_FLAG_RX1       |\
-		ALX_MSIX_FLAG_RX2       |\
-		ALX_MSIX_FLAG_RX3       |\
-		ALX_MSIX_FLAG_RX4       |\
-		ALX_MSIX_FLAG_RX5       |\
-		ALX_MSIX_FLAG_RX6       |\
-		ALX_MSIX_FLAG_RX7)
-#define ALX_MSIX_FLAG_TXS (\
-		ALX_MSIX_FLAG_TX0       |\
-		ALX_MSIX_FLAG_TX1       |\
-		ALX_MSIX_FLAG_TX2       |\
-		ALX_MSIX_FLAG_TX3)
-#define ALX_MSIX_FLAG_ALL (\
-		ALX_MSIX_FLAG_RXS       |\
-		ALX_MSIX_FLAG_TXS       |\
-		ALX_MSIX_FLAG_TIMER     |\
-		ALX_MSIX_FLAG_ALERT     |\
-		ALX_MSIX_FLAG_SMB       |\
-		ALX_MSIX_FLAG_PHY)
+struct alx_napi {
+	struct napi_struct	napi;
+	struct alx_adapter	*adpt;
+	struct alx_rx_queue	*rxq;
+	struct alx_tx_queue	*txq;
+	int			vec_idx;
+	u32			vec_mask;
+	char			irq_lbl[IFNAMSIZ];
+};
 
-#define CHK_MSIX_FLAG(_flag)    CHK_FLAG(msix, MSIX, _flag)
-#define SET_MSIX_FLAG(_flag)    SET_FLAG(msix, MSIX, _flag)
-#define CLI_MSIX_FLAG(_flag)    CLI_FLAG(msix, MSIX, _flag)
+enum ALX_FLAGS {
+	ALX_FLAG_CAP_GIGA = 0,		/* support gigabit speed */
+	ALX_FLAG_CAP_PTP,		/* support 1588 */
+	ALX_FLAG_CAP_AZ,		/* support EEE */
+	ALX_FLAG_CAP_L0S,		/* support ASPM L0S */
+	ALX_FLAG_CAP_L1,		/* support ASPM L1 */
+	ALX_FLAG_CAP_SWOI,		/* support SWOI feature */
+	ALX_FLAG_CAP_RSS,		/* support RSS */
+	ALX_FLAG_CAP_MSIX,		/* support MSI-X */
+	ALX_FLAG_CAP_MTQ,		/* support Multi-TX-Q */
+	ALX_FLAG_CAP_MRQ,		/* support Multi-RX-Q */
+	ALX_FLAG_USING_MSIX,		/* using MSI-X */
+	ALX_FLAG_USING_MSI,		/* using MSI */
+	ALX_FLAG_RESETING,		/* hw is in reset process */
+	ALX_FLAG_TESTING,		/* self testing */
+	ALX_FLAG_HALT,			/* hw is down */
+	ALX_FLAG_FPGA,			/* FPGA, not ASIC */
+	ALX_FLAG_TASK_PENDING,		/* work is pending */
+	ALX_FLAG_TASK_CHK_LINK,		/* check PHY link */
+	ALX_FLAG_TASK_RESET,		/* reset whole chip */
+	ALX_FLAG_TASK_UPDATE_SMB,	/* update SMB */
+
+	ALX_FLAG_NUMBER_OF_FLAGS,
+};
 
 /*
  *board specific private data structure
  */
 struct alx_adapter {
-	struct net_device *netdev;
-	struct pci_dev    *pdev;
-	struct net_device_stats net_stats;
-	bool netdev_registered;
-	u16 bd_number;    /* board number;*/
+	u8 __iomem *hw_addr;		/* memory mapped PCI base address */
 
-	struct alx_msix_param *msix[ALX_MAX_MSIX_INTRS];
-	struct msix_entry     *msix_entries;
-	int num_msix_rxques;
-	int num_msix_txques;
-	int num_msix_noques;    /* true count of msix_noques for device */
-	int num_msix_intrs;
+	u8 mac_addr[ETH_ALEN];		/* current mac address */
+	u8 perm_addr[ETH_ALEN];		/* permanent mac address */
 
-	int min_msix_intrs;
-	int max_msix_intrs;
+	struct net_device	*netdev;
+	struct pci_dev		*pdev;
 
-	/* All Descriptor memory */
-	struct alx_ring_header ring_header;
+	u16 bd_number;			/* board number;*/
 
-	/* TX */
-	struct alx_tx_queue *tx_queue[ALX_MAX_TX_QUEUES];
-	/* RX */
-	struct alx_rx_queue *rx_queue[ALX_MAX_RX_QUEUES];
+	unsigned int		nr_vec;		/* totally msix vectors */
+	struct msix_entry	*msix_ent;	/* msix entries */
 
-	u16 num_txques;
-	u16 num_rxques; /* equal max(num_hw_rxques, num_sw_rxques) */
-	u16 num_hw_rxques;
-	u16 num_sw_rxques;
-	u16 max_rxques;
-	u16 max_txques;
+	/* all descriptor memory */
+	struct alx_ring_header	ring_header;
+	int			tx_ringsz;
+	int			rx_ringsz;
+	int			rxbuf_size;
 
-	u16 num_txdescs;
-	u16 num_rxdescs;
+	struct alx_napi		*qnapi[8];
+	int			nr_txq;		/* number of napi for TX-Q */
+	int			nr_rxq;		/* number of napi for RX-Q */
+	int			nr_napi;	/* total napi for TX-Q/RX-Q  */
+	u16			mtu;		/* MTU */
+	u16			imt;		/* interrupt moderation timer */
+	u8			dma_chnl;	/* number of DMA channels */
+	u8			max_dma_chnl;
+	u32			rx_ctrl;	/* main rx control */
+	u32			mc_hash[2];	/* multicast addr hash table */
 
-	u32 rxbuf_size;
+	u8			rss_key[40];	/* RSS hash algorithm key */
+	u32			rss_idt[32];	/* RSS indirection table */
+	u16			rss_idt_size;	/* RSS indirection table size */
+	u8			rss_hash_type;	/* RSS hash type */
 
-	struct alx_cmb cmb;
-	struct alx_smb smb;
+	u32			wrr[ALX_MAX_TX_QUEUES];	/* weight round robin
+							 * for multiple-tx-Q */
+	u32			wrr_ctrl;	/* prioirty control */
 
-	/* structs defined in alx_hw.h */
-	struct alx_hw       hw;
-	struct alx_hw_stats hw_stats;
+	u32			imask;		/* interrupt mask for ALX_IMR */
+	u32			smb_timer;	/* statistic counts refresh
+						 * timeout, million-seconds */
+	spinlock_t		smb_lock;	/* lock for updating stats */
 
-	u32 *config_space;
+	bool			link_up;	/* link up flag */
+	u16			link_speed;	/* current link speed */
+	u8			link_duplex;	/* current link duplex */
 
-	struct work_struct alx_task;
-	struct timer_list  alx_timer;
+	u32			adv_cfg;	/* auto-neg advertisement
+						 * or force mode config
+						 */
+	u8			flowctrl;	/* flow control */
 
-	unsigned long link_jiffies;
+	struct work_struct	task;		/* any delayed work */
+	struct net_device_stats net_stats;	/* statistics counters */
+	struct alx_hw_stats	hw_stats;	/* statistics counters,
+						 * same order with hw
+						 */
+	u32			sleep_ctrl;	/* control used when sleep */
+	atomic_t		irq_sem;	/* interrupt sync */
+	u16			msg_enable;	/* msg level */
 
-	u32 wol;
-	spinlock_t tx_lock;
-	spinlock_t rx_lock;
-	atomic_t irq_sem;
+	DECLARE_BITMAP(flags, ALX_FLAG_NUMBER_OF_FLAGS);
 
-	u16 msg_enable;
-	unsigned long flags[2];
+	spinlock_t		mdio_lock;	/* used for MII bus access */
+	struct mdio_if_info	mdio;
+	u16			phy_id[2];
+
+	bool			lnk_patch;	/* PHY link patch flag */
+	bool			hib_patch;	/* PHY hibernation patch flag */
 };
 
-#define ALX_ADPT_FLAG_0_MSI_CAP                 0x00000001
-#define ALX_ADPT_FLAG_0_MSI_EN                  0x00000002
-#define ALX_ADPT_FLAG_0_MSIX_CAP                0x00000004
-#define ALX_ADPT_FLAG_0_MSIX_EN                 0x00000008
-#define ALX_ADPT_FLAG_0_MRQ_CAP                 0x00000010
-#define ALX_ADPT_FLAG_0_MRQ_EN                  0x00000020
-#define ALX_ADPT_FLAG_0_MTQ_CAP                 0x00000040
-#define ALX_ADPT_FLAG_0_MTQ_EN                  0x00000080
-#define ALX_ADPT_FLAG_0_SRSS_CAP                0x00000100
-#define ALX_ADPT_FLAG_0_SRSS_EN                 0x00000200
-#define ALX_ADPT_FLAG_0_FIXED_MSIX              0x00000400
+#define ALX_VID(_a)	((_a)->pdev->vendor)
+#define ALX_DID(_a)	((_a)->pdev->device)
+#define ALX_SUB_VID(_a)	((_a)->pdev->subsystem_vendor)
+#define ALX_SUB_DID(_a)	((_a)->pdev->subsystem_device)
+#define ALX_REVID(_a)	((_a)->pdev->revision >> ALX_PCI_REVID_SHIFT)
+#define ALX_WITH_CR(_a)	((_a)->pdev->revision & 1)
 
-#define ALX_ADPT_FLAG_0_TASK_REINIT_REQ         0x00010000  /* reinit */
-#define ALX_ADPT_FLAG_0_TASK_LSC_REQ            0x00020000
-
-#define ALX_ADPT_FLAG_1_STATE_TESTING           0x00000001
-#define ALX_ADPT_FLAG_1_STATE_RESETTING         0x00000002
-#define ALX_ADPT_FLAG_1_STATE_DOWN              0x00000004
-#define ALX_ADPT_FLAG_1_STATE_WATCH_DOG         0x00000008
-#define ALX_ADPT_FLAG_1_STATE_DIAG_RUNNING      0x00000010
-#define ALX_ADPT_FLAG_1_STATE_INACTIVE          0x00000020
+#define ALX_FLAG(_adpt, _FLAG) (\
+	test_bit(ALX_FLAG_##_FLAG, (_adpt)->flags))
+#define ALX_FLAG_SET(_adpt, _FLAG) (\
+	set_bit(ALX_FLAG_##_FLAG, (_adpt)->flags))
+#define ALX_FLAG_CLEAR(_adpt, _FLAG) (\
+	clear_bit(ALX_FLAG_##_FLAG, (_adpt)->flags))
 
 
-#define CHK_ADPT_FLAG(_idx, _flag)	\
-		CHK_FLAG_ARRAY(adpt, _idx, ADPT, _flag)
-#define SET_ADPT_FLAG(_idx, _flag)	\
-		SET_FLAG_ARRAY(adpt, _idx, ADPT, _flag)
-#define CLI_ADPT_FLAG(_idx, _flag)	\
-		CLI_FLAG_ARRAY(adpt, _idx, ADPT, _flag)
+/* write to 8bit register via pci memory space */
+#define ALX_MEM_W8(s, reg, val) (writeb((val), ((s)->hw_addr + reg)))
 
-/* default to trying for four seconds */
-#define ALX_TRY_LINK_TIMEOUT (4 * HZ)
+/* read from 8bit register via pci memory space */
+#define ALX_MEM_R8(s, reg, pdat) (\
+		*(u8 *)(pdat) = readb((s)->hw_addr + reg))
 
+/* write to 16bit register via pci memory space */
+#define ALX_MEM_W16(s, reg, val) (writew((val), ((s)->hw_addr + reg)))
 
-#define ALX_OPEN_CTRL_IRQ_EN            0x00000001
-#define ALX_OPEN_CTRL_RESET_MAC         0x00000002
-#define ALX_OPEN_CTRL_RESET_PHY         0x00000004
-#define ALX_OPEN_CTRL_RESET_ALL (\
-		ALX_OPEN_CTRL_RESET_MAC         |\
-		ALX_OPEN_CTRL_RESET_PHY)
+/* read from 16bit register via pci memory space */
+#define ALX_MEM_R16(s, reg, pdat) (\
+		*(u16 *)(pdat) = readw((s)->hw_addr + reg))
+
+/* write to 32bit register via pci memory space */
+#define ALX_MEM_W32(s, reg, val) (writel((val), ((s)->hw_addr + reg)))
+
+/* read from 32bit register via pci memory space */
+#define ALX_MEM_R32(s, reg, pdat) (\
+		*(u32 *)(pdat) = readl((s)->hw_addr + reg))
+
+/* read from 16bit register via pci config space */
+#define ALX_CFG_R16(s, reg, pdat) (\
+	pci_read_config_word((s)->pdev, (reg), (pdat)))
+
+/* write to 16bit register via pci config space */
+#define ALX_CFG_W16(s, reg, val) (\
+	pci_write_config_word((s)->pdev, (reg), (val)))
+
+/* flush regs */
+#define ALX_MEM_FLUSH(s) (readl((s)->hw_addr))
 
 /* needed by alx_ethtool.c */
+extern void alx_reinit(struct alx_adapter *adpt);
+extern void __devinit alx_set_ethtool_ops(struct net_device *dev);
 extern char alx_drv_name[];
-extern void alx_reinit_locked(struct alx_adapter *adpt);
-extern void alx_set_ethtool_ops(struct net_device *netdev);
-#ifdef ETHTOOL_OPS_COMPAT
-extern int ethtool_ioctl(struct ifreq *ifr);
-#endif
+
 
 #endif /* _ALX_H_ */
