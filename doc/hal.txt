@@ -1,0 +1,61 @@
+What the heck? An Atheros HAL? Here?
+====================================
+
+The aim of this work is to migrate the driver away from a very Linux-centric
+take on things and more towards something that can be easily leveraged
+on multiple platforms.
+
+This was one of the HAL design goals back for the Wireless device support.
+Yes, another goal was _binary_ interface and object sharing - we don't
+have to worry about this.  We are doing well if we're able to compile
+and use shared parts of the driver across multiple platforms.
+
+At a very top level, the ethernet driver has a very small set of
+interfaces to the kernel:
+
+* probe/attach;
+* suspend/resume (if required);
+* interrupt registration and callback, ithread, or appropriate;
+* a datapath (TX and RX);
+* a control path (up/down, ioctl(), etc);
+* some statistics path (eg ethtool statistics).
+
+Each of these modules have both machine dependent and independent parts.
+
+The aim of this "HAL-ification" of alx is to isolate out the hardware
+interface stuff into separate files and make those files compilable
+on multiple platforms.  To that end, there are a few "requirements" for
+portable driver code.  This list isn't exhaustive and will grow/change
+over time:
+
+* The types being used by those shared routines must be generic and
+  not assume a specific compiler or environment.  Notably, 'bool',
+  'u8/u16/u32' can't be used;
+
+* Care must be taken when assuming packed structures - as different
+  compilers allow for different kinds of packing;
+
+* Same deal with inlining things;
+
+* You -must not assume- that atomics and locking primitives are
+  available in the hardware code.  Anything that requires synchronisation
+  or ordering must be done by the upper layer driver and OS dependent
+  code;
+
+* You can't use OS specific defines, typedefs, etc in the code.
+  This does mean that you may end up defining HAL_ typedefs and
+  enums for things that exist in UNIX, then write functions which
+  simply map the OS type to the HAL_ type.
+
+In addition, some non-HAL code may be shared.  For example, code
+which maintains the TX and RX descriptor arrays.  Here, we may
+wish to use locks, atomics and other primitives.  However we can't
+assume that we can use those primitives across multiple operating
+systems - each OS has a set of what's allowed and what's not allowed.
+For example, Windows/MacOSX doesn't allow locks in the interrupt path
+whereas Linux/FreeBSD interrupt threads allow locks.
+
+For now, this work will just focus on separating out the hardware code
+enough to get the device to probe/attach.  Once that's done, the rest
+of the driver can be broken up into pieces that make sense to share
+across operating systems, with whatever the relevant caveats are.
