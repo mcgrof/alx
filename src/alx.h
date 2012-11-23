@@ -29,6 +29,7 @@
 #include <linux/ethtool.h>
 #include <linux/crc32.h>
 #include <linux/mdio.h>
+
 #include "alx_hw.h"
 
 /* specific error info */
@@ -445,7 +446,7 @@ struct alx_hw_stats {
 struct alx_ring_header {
 	void        *desc;      /* virt addr */
 	dma_addr_t   dma;       /* phy addr */
-	u32          size;      /* length in bytes */
+	A_UINT32          size;      /* length in bytes */
 };
 
 /*
@@ -456,7 +457,7 @@ struct alx_buffer {
 	struct sk_buff *skb;		/* socket buffer */
 	DEFINE_DMA_UNMAP_ADDR(dma);	/* DMA address */
 	DEFINE_DMA_UNMAP_LEN(size);	/* buffer size */
-	u16		flags;		/* information of this buffer */
+	A_UINT16		flags;		/* information of this buffer */
 };
 #define ALX_BUF_TX_FIRSTFRAG	0x1
 
@@ -470,13 +471,13 @@ struct alx_rx_queue {
 	dma_addr_t rfd_dma;		/* rfd ring physical addr */
 	struct alx_buffer *bf_info;	/* info for rx-skbs */
 
-	u16 count;			/* number of ring elements */
-	u16 pidx;			/* rfd producer index */
-	u16 cidx;			/* rfd consumer index */
-	u16 rrd_cidx;
-	u16 p_reg;			/* register saving producer index */
-	u16 c_reg;			/* register saving consumer index */
-	u16 qidx;			/* queue index */
+	A_UINT16 count;			/* number of ring elements */
+	A_UINT16 pidx;			/* rfd producer index */
+	A_UINT16 cidx;			/* rfd consumer index */
+	A_UINT16 rrd_cidx;
+	A_UINT16 p_reg;			/* register saving producer index */
+	A_UINT16 c_reg;			/* register saving consumer index */
+	A_UINT16 qidx;			/* queue index */
 	unsigned long flag;
 
 	struct sk_buff_head list;
@@ -490,12 +491,12 @@ struct alx_tx_queue {
 	struct tpd_desc *tpd_hdr;	/* tpd ring virtual addr */
 	dma_addr_t tpd_dma;		/* tpd ring physical addr */
 	struct alx_buffer *bf_info;	/* info for tx-skbs pending on HW */
-	u16 count;			/* number of ring elements  */
-	u16 pidx;			/* producer index */
+	A_UINT16 count;			/* number of ring elements  */
+	A_UINT16 pidx;			/* producer index */
 	atomic_t cidx;			/* consumer index */
-	u16 p_reg;			/* register saving producer index */
-	u16 c_reg;			/* register saving consumer index */
-	u16 qidx;			/* queue index */
+	A_UINT16 p_reg;			/* register saving producer index */
+	A_UINT16 c_reg;			/* register saving consumer index */
+	A_UINT16 qidx;			/* queue index */
 };
 
 #define ALX_TX_WAKEUP_THRESH(_tq) ((_tq)->count / 4)
@@ -507,7 +508,7 @@ struct alx_napi {
 	struct alx_rx_queue	*rxq;
 	struct alx_tx_queue	*txq;
 	int			vec_idx;
-	u32			vec_mask;
+	A_UINT32			vec_mask;
 	char			irq_lbl[IFNAMSIZ];
 };
 
@@ -540,15 +541,15 @@ enum ALX_FLAGS {
  *board specific private data structure
  */
 struct alx_adapter {
-	u8 __iomem *hw_addr;		/* memory mapped PCI base address */
+	A_UINT8 __iomem *hw_addr;		/* memory mapped PCI base address */
 
-	u8 mac_addr[ETH_ALEN];		/* current mac address */
-	u8 perm_addr[ETH_ALEN];		/* permanent mac address */
+	A_UINT8 mac_addr[ETH_ALEN];		/* current mac address */
+	A_UINT8 perm_addr[ETH_ALEN];		/* permanent mac address */
 
 	struct net_device	*netdev;
 	struct pci_dev		*pdev;
 
-	u16 bd_number;			/* board number;*/
+	A_UINT16 bd_number;			/* board number;*/
 
 	unsigned int		nr_vec;		/* totally msix vectors */
 	struct msix_entry	*msix_ent;	/* msix entries */
@@ -563,53 +564,53 @@ struct alx_adapter {
 	int			nr_txq;		/* number of napi for TX-Q */
 	int			nr_rxq;		/* number of napi for RX-Q */
 	int			nr_napi;	/* total napi for TX-Q/RX-Q  */
-	u16			mtu;		/* MTU */
-	u16			imt;		/* interrupt moderation timer */
-	u8			dma_chnl;	/* number of DMA channels */
-	u8			max_dma_chnl;
-	u32			rx_ctrl;	/* main rx control */
-	u32			mc_hash[2];	/* multicast addr hash table */
+	A_UINT16			mtu;		/* MTU */
+	A_UINT16			imt;		/* interrupt moderation timer */
+	A_UINT8			dma_chnl;	/* number of DMA channels */
+	A_UINT8			max_dma_chnl;
+	A_UINT32			rx_ctrl;	/* main rx control */
+	A_UINT32			mc_hash[2];	/* multicast addr hash table */
 
-	u8			rss_key[40];	/* RSS hash algorithm key */
-	u32			rss_idt[32];	/* RSS indirection table */
-	u16			rss_idt_size;	/* RSS indirection table size */
-	u8			rss_hash_type;	/* RSS hash type */
+	A_UINT8			rss_key[40];	/* RSS hash algorithm key */
+	A_UINT32			rss_idt[32];	/* RSS indirection table */
+	A_UINT16			rss_idt_size;	/* RSS indirection table size */
+	A_UINT8			rss_hash_type;	/* RSS hash type */
 
-	u32			wrr[ALX_MAX_TX_QUEUES];	/* weight round robin
+	A_UINT32			wrr[ALX_MAX_TX_QUEUES];	/* weight round robin
 							 * for multiple-tx-Q */
-	u32			wrr_ctrl;	/* prioirty control */
+	A_UINT32			wrr_ctrl;	/* prioirty control */
 
-	u32			imask;		/* interrupt mask for ALX_IMR */
-	u32			smb_timer;	/* statistic counts refresh
+	A_UINT32			imask;		/* interrupt mask for ALX_IMR */
+	A_UINT32			smb_timer;	/* statistic counts refresh
 						 * timeout, million-seconds */
 	spinlock_t		smb_lock;	/* lock for updating stats */
 
-	bool			link_up;	/* link up flag */
-	u16			link_speed;	/* current link speed */
-	u8			link_duplex;	/* current link duplex */
+	HAL_BOOL			link_up;	/* link up flag */
+	A_UINT16			link_speed;	/* current link speed */
+	A_UINT8			link_duplex;	/* current link duplex */
 
-	u32			adv_cfg;	/* auto-neg advertisement
+	A_UINT32			adv_cfg;	/* auto-neg advertisement
 						 * or force mode config
 						 */
-	u8			flowctrl;	/* flow control */
+	A_UINT8			flowctrl;	/* flow control */
 
 	struct work_struct	task;		/* any delayed work */
 	struct net_device_stats net_stats;	/* statistics counters */
 	struct alx_hw_stats	hw_stats;	/* statistics counters,
 						 * same order with hw
 						 */
-	u32			sleep_ctrl;	/* control used when sleep */
+	A_UINT32			sleep_ctrl;	/* control used when sleep */
 	atomic_t		irq_sem;	/* interrupt sync */
-	u16			msg_enable;	/* msg level */
+	A_UINT16			msg_enable;	/* msg level */
 
 	DECLARE_BITMAP(flags, ALX_FLAG_NUMBER_OF_FLAGS);
 
 	spinlock_t		mdio_lock;	/* used for MII bus access */
 	struct mdio_if_info	mdio;
-	u16			phy_id[2];
+	A_UINT16			phy_id[2];
 
-	bool			lnk_patch;	/* PHY link patch flag */
-	bool			hib_patch;	/* PHY hibernation patch flag */
+	HAL_BOOL			lnk_patch;	/* PHY link patch flag */
+	HAL_BOOL			hib_patch;	/* PHY hibernation patch flag */
 };
 
 #define ALX_VID(_a)	((_a)->pdev->vendor)
@@ -632,21 +633,21 @@ struct alx_adapter {
 
 /* read from 8bit register via pci memory space */
 #define ALX_MEM_R8(s, reg, pdat) (\
-		*(u8 *)(pdat) = readb((s)->hw_addr + reg))
+		*(A_UINT8 *)(pdat) = readb((s)->hw_addr + reg))
 
 /* write to 16bit register via pci memory space */
 #define ALX_MEM_W16(s, reg, val) (writew((val), ((s)->hw_addr + reg)))
 
 /* read from 16bit register via pci memory space */
 #define ALX_MEM_R16(s, reg, pdat) (\
-		*(u16 *)(pdat) = readw((s)->hw_addr + reg))
+		*(A_UINT16 *)(pdat) = readw((s)->hw_addr + reg))
 
 /* write to 32bit register via pci memory space */
 #define ALX_MEM_W32(s, reg, val) (writel((val), ((s)->hw_addr + reg)))
 
 /* read from 32bit register via pci memory space */
 #define ALX_MEM_R32(s, reg, pdat) (\
-		*(u32 *)(pdat) = readl((s)->hw_addr + reg))
+		*(A_UINT32 *)(pdat) = readl((s)->hw_addr + reg))
 
 /* read from 16bit register via pci config space */
 #define ALX_CFG_R16(s, reg, pdat) (\

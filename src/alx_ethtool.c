@@ -17,6 +17,8 @@
 #include <linux/pci.h>
 #include <linux/ethtool.h>
 
+#include "ah_osdep.h"
+
 #include "alx.h"
 
 static int alx_get_settings(struct net_device *netdev,
@@ -58,7 +60,7 @@ static int alx_set_settings(struct net_device *netdev,
 			    struct ethtool_cmd *ecmd)
 {
 	struct alx_adapter *adpt = netdev_priv(netdev);
-	u32 adv_cfg;
+	A_UINT32 adv_cfg;
 	int err = 0;
 
 	while (test_and_set_bit(ALX_FLAG_RESETING, adpt->flags))
@@ -137,8 +139,8 @@ static int alx_set_pauseparam(struct net_device *netdev,
 {
 	struct alx_adapter *adpt = netdev_priv(netdev);
 	int err = 0;
-	bool reconfig_phy = false;
-	u8 fc = 0;
+	HAL_BOOL reconfig_phy = AH_FALSE;
+	A_UINT8 fc = 0;
 
 	if (pause->tx_pause)
 		fc |= ALX_FC_TX;
@@ -153,10 +155,10 @@ static int alx_set_pauseparam(struct net_device *netdev,
 	/* restart auto-neg for auto-mode */
 	if (adpt->adv_cfg & ADVERTISED_Autoneg) {
 		if (!((fc ^ adpt->flowctrl) & ALX_FC_ANEG))
-			reconfig_phy = true; /* auto/force change */
+			reconfig_phy = AH_RUE; /* auto/force change */
 		if (fc & adpt->flowctrl & ALX_FC_ANEG &&
 		    (fc ^ adpt->flowctrl) & (ALX_FC_RX | ALX_FC_TX))
-			reconfig_phy = true;
+			reconfig_phy = AH_TRUE;
 	}
 
 	if (reconfig_phy) {
@@ -180,21 +182,21 @@ static int alx_set_pauseparam(struct net_device *netdev,
 	return err;
 }
 
-static u32 alx_get_msglevel(struct net_device *netdev)
+static A_UINT32 alx_get_msglevel(struct net_device *netdev)
 {
 	struct alx_adapter *adpt = netdev_priv(netdev);
 
 	return adpt->msg_enable;
 }
 
-static void alx_set_msglevel(struct net_device *netdev, u32 data)
+static void alx_set_msglevel(struct net_device *netdev, A_UINT32 data)
 {
 	struct alx_adapter *adpt = netdev_priv(netdev);
 
 	adpt->msg_enable = data;
 }
 
-static const u32 hw_regs[] = {
+static const A_UINT32 hw_regs[] = {
 	ALX_DEV_CAP, ALX_DEV_CTRL, ALX_LNK_CAP, ALX_LNK_CTRL,
 	ALX_UE_SVRT, ALX_EFLD, ALX_SLD, ALX_PPHY_MISC1,
 	ALX_PPHY_MISC2, ALX_PDLL_TRNS1,
@@ -237,7 +239,7 @@ static void alx_get_regs(struct net_device *netdev,
 			 struct ethtool_regs *regs, void *buff)
 {
 	struct alx_adapter *adpt = netdev_priv(netdev);
-	u32 *p = buff;
+	A_UINT32 *p = buff;
 	int i;
 
 	regs->version = (ALX_DID(adpt) << 16) | (ALX_REVID(adpt) << 8) | 1;
@@ -248,7 +250,7 @@ static void alx_get_regs(struct net_device *netdev,
 		ALX_MEM_R32(adpt, hw_regs[i], p);
 
 	/* last one for PHY Link Status */
-	alx_read_phy_reg(adpt, MII_BMSR, (u16 *)p);
+	alx_read_phy_reg(adpt, MII_BMSR, (A_UINT16 *)p);
 }
 
 static void alx_get_drvinfo(struct net_device *netdev,
