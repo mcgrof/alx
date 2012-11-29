@@ -17,8 +17,11 @@
 #ifndef ALX_HW_H_
 #define ALX_HW_H_
 
+#if 0
 #include <linux/types.h>
 #include <linux/mii.h>
+#endif
+
 #include "alx.h"
 
 #define FIELD_GETX(_x, _name)   (((_x) >> (_name##_SHIFT)) & (_name##_MASK))

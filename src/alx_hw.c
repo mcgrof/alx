@@ -14,12 +14,16 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#if 0
 #include <linux/pci_regs.h>
 #include <linux/mii.h>
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
+#endif
 
 #include "ah_osdep.h"
+
+#include "ah_osinc.h"
 
 #include "alx.h"
 

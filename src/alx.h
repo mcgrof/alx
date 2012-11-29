@@ -17,6 +17,7 @@
 #ifndef _ALX_H_
 #define _ALX_H_
 
+#if 0
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/interrupt.h>
@@ -29,6 +30,7 @@
 #include <linux/ethtool.h>
 #include <linux/crc32.h>
 #include <linux/mdio.h>
+#endif
 
 #include "alx_hw.h"
 
