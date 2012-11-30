@@ -14,10 +14,16 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#if 0
 #include <linux/pci_regs.h>
 #include <linux/mii.h>
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
+#endif
+
+#include "ah_osdep.h"
+
+#include "ah_osinc.h"
 
 #include "alx.h"
 
@@ -25,10 +31,10 @@
 
 
 /* get permanent mac address from */
-int alx_get_perm_macaddr(struct alx_adapter *adpt, u8 *addr)
+int alx_get_perm_macaddr(struct alx_adapter *adpt, A_UINT8 *addr)
 {
-	u32 val, mac0, mac1;
-	u16 flag, i;
+	A_UINT32 val, mac0, mac1;
+	A_UINT16 flag, i;
 
 #define INTN_LOADED 0x1
 #define EXTN_LOADED 0x2
@@ -44,7 +50,7 @@ read_mcadr:
 
 	/* addr should be big-endian */
 	*(__be32 *)(addr + 2) = cpu_to_be32(mac0);
-	*(__be16 *)addr = cpu_to_be16((u16)mac1);
+	*(__be16 *)addr = cpu_to_be16((A_UINT16)mac1);
 
 	if (is_valid_ether_addr(addr))
 		return 0;
@@ -55,13 +61,13 @@ read_mcadr:
 			ALX_MEM_R32(adpt, ALX_SLD, &val);
 			if ((val & (ALX_SLD_STAT | ALX_SLD_START)) == 0)
 				break;
-			mdelay(1);
+			OS_MDELAY(1);
 		}
 		if (i == ALX_SLD_MAX_TO)
 			goto out;
 		ALX_MEM_W32(adpt, ALX_SLD, val | ALX_SLD_START);
 		for (i = 0; i < ALX_SLD_MAX_TO; i++) {
-			mdelay(1);
+			OS_MDELAY(1);
 			ALX_MEM_R32(adpt, ALX_SLD, &val);
 			if ((val & ALX_SLD_START) == 0)
 				break;
@@ -82,13 +88,13 @@ read_mcadr:
 					    ALX_EFLD_START)) == 0) {
 					break;
 				}
-				mdelay(1);
+				OS_MDELAY(1);
 			}
 			if (i == ALX_SLD_MAX_TO)
 				goto out;
 			ALX_MEM_W32(adpt, ALX_EFLD, val | ALX_EFLD_START);
 			for (i = 0; i < ALX_SLD_MAX_TO; i++) {
-				mdelay(1);
+				OS_MDELAY(1);
 				ALX_MEM_R32(adpt, ALX_EFLD, &val);
 				if ((val & ALX_EFLD_START) == 0)
 					break;
@@ -104,9 +110,9 @@ out:
 	return ALX_ERR_ALOAD;
 }
 
-void alx_set_macaddr(struct alx_adapter *adpt, u8 *addr)
+void alx_set_macaddr(struct alx_adapter *adpt, A_UINT8 *addr)
 {
-	u32 val;
+	A_UINT32 val;
 
 	/* for example: 00-0B-6A-F6-00-DC
 	 * STAD0=6AF600DC, STAD1=000B.
@@ -119,7 +125,7 @@ void alx_set_macaddr(struct alx_adapter *adpt, u8 *addr)
 
 void alx_enable_osc(struct alx_adapter *adpt)
 {
-	u32 val;
+	A_UINT32 val;
 
 	/* rising edge */
 	ALX_MEM_R32(adpt, ALX_MISC, &val);
@@ -127,9 +133,9 @@ void alx_enable_osc(struct alx_adapter *adpt)
 	ALX_MEM_W32(adpt, ALX_MISC, val | ALX_MISC_INTNLOSC_OPEN);
 }
 
-void alx_reset_osc(struct alx_adapter *adpt, u8 rev)
+void alx_reset_osc(struct alx_adapter *adpt, A_UINT8 rev)
 {
-	u32 val, val2;
+	A_UINT32 val, val2;
 
 	/* clear Internal OSC settings, switching OSC by hw itself */
 	ALX_MEM_R32(adpt, ALX_MISC3, &val);
@@ -164,18 +170,18 @@ void alx_reset_osc(struct alx_adapter *adpt, u8 rev)
 		ALX_MEM_W32(adpt, ALX_MISC, val);
 	}
 
-	udelay(20);
+	OS_UDELAY(20);
 }
 
 int alx_reset_mac(struct alx_adapter *adpt)
 {
-	u32 val, pmctrl;
+	A_UINT32 val, pmctrl;
 	int i, ret;
-	u8 rev;
-	bool a_cr;
+	A_UINT8 rev;
+	HAL_BOOL a_cr;
 
 	pmctrl = 0;
-	rev = (u8)ALX_REVID(adpt);
+	rev = (A_UINT8)ALX_REVID(adpt);
 	a_cr = ALX_REV_A(rev) && ALX_WITH_CR(adpt);
 
 	/* disable all interrupts, RXQ/TXQ */
@@ -206,22 +212,22 @@ int alx_reset_mac(struct alx_adapter *adpt)
 		    val | ALX_MASTER_DMA_MAC_RST | ALX_MASTER_OOB_DIS);
 
 	/* make sure it's real idle */
-	udelay(10);
+	OS_UDELAY(10);
 	for (i = 0; i < ALX_DMA_MAC_RST_TO; i++) {
 		ALX_MEM_R32(adpt, ALX_RFD_PIDX, &val);
 		if (val == 0)
 			break;
-		udelay(10);
+		OS_UDELAY(10);
 	}
 	for (; i < ALX_DMA_MAC_RST_TO; i++) {
 		ALX_MEM_R32(adpt, ALX_MASTER, &val);
 		if ((val & ALX_MASTER_DMA_MAC_RST) == 0)
 			break;
-		udelay(10);
+		OS_UDELAY(10);
 	}
 	if (i == ALX_DMA_MAC_RST_TO)
 		return ALX_ERR_RSTMAC;
-	udelay(10);
+	OS_UDELAY(10);
 
 	if (a_cr) {
 		/* set ALX_MASTER_PCLKSEL_SRDS (affect by soft-rst, PERST) */
@@ -243,7 +249,7 @@ int alx_reset_mac(struct alx_adapter *adpt)
 	if (ALX_REV_A(rev))
 		val &= ~ALX_MISC_ISO_EN;
 	ALX_MEM_W32(adpt, ALX_MISC, val);
-	udelay(20);
+	OS_UDELAY(20);
 
 	/* driver control speed/duplex, hash-alg */
 	ALX_MEM_W32(adpt, ALX_MAC_CTRL, adpt->rx_ctrl);
@@ -260,11 +266,11 @@ int alx_reset_mac(struct alx_adapter *adpt)
  *     completely reset phy, all settings/workaround will be re-configureed
  *     hib_en: enable/disable hibernation on PHY
  */
-void alx_reset_phy(struct alx_adapter *adpt, bool hib_en)
+void alx_reset_phy(struct alx_adapter *adpt, HAL_BOOL hib_en)
 {
 	int i;
-	u32 val;
-	u16 phy_val;
+	A_UINT32 val;
+	A_UINT16 phy_val;
 
 	/* (DSP)reset PHY core */
 	ALX_MEM_R32(adpt, ALX_PHY_CTRL, &val);
@@ -278,12 +284,12 @@ void alx_reset_phy(struct alx_adapter *adpt, bool hib_en)
 	else
 		val &= ~(ALX_PHY_CTRL_HIB_PULSE | ALX_PHY_CTRL_HIB_EN);
 	ALX_MEM_W32(adpt, ALX_PHY_CTRL, val);
-	udelay(10); /* 5us is enough */
+	OS_UDELAY(10); /* 5us is enough */
 	ALX_MEM_W32(adpt, ALX_PHY_CTRL, val | ALX_PHY_CTRL_DSPRST_OUT);
 
 	/* delay 800us */
 	for (i = 0; i < ALX_PHY_CTRL_DSPRST_TO; i++)
-		udelay(10);
+		OS_UDELAY(10);
 
 	/* phy power saving & hib */
 	if (hib_en) {
@@ -362,9 +368,9 @@ void alx_reset_phy(struct alx_adapter *adpt, bool hib_en)
  */
 void alx_reset_pcie(struct alx_adapter *adpt)
 {
-	u32 val;
-	u16 val16;
-	u8 rev = (u8)ALX_REVID(adpt);
+	A_UINT32 val;
+	A_UINT16 val16;
+	A_UINT8 rev = (A_UINT8)ALX_REVID(adpt);
 
 	/* Workaround for PCI problem when BIOS sets MMRBC incorrectly. */
 	ALX_CFG_R16(adpt, PCI_COMMAND, &val16);
@@ -409,7 +415,7 @@ void alx_reset_pcie(struct alx_adapter *adpt)
 			ALX_FLAG(adpt, CAP_L0S),
 			ALX_FLAG(adpt, CAP_L1));
 
-	udelay(10);
+	OS_UDELAY(10);
 }
 
 /* alx_stop_mac
@@ -418,15 +424,15 @@ void alx_reset_pcie(struct alx_adapter *adpt)
  */
 int alx_stop_mac(struct alx_adapter *adpt)
 {
-	u32 rxq, txq, val;
-	u16 i;
+	A_UINT32 rxq, txq, val;
+	A_UINT16 i;
 
 	ALX_MEM_R32(adpt, ALX_RXQ0, &rxq);
 	ALX_MEM_W32(adpt, ALX_RXQ0, rxq & ~ALX_RXQ0_EN);
 	ALX_MEM_R32(adpt, ALX_TXQ0, &txq);
 	ALX_MEM_W32(adpt, ALX_TXQ0, txq & ~ALX_TXQ0_EN);
 
-	udelay(40);
+	OS_UDELAY(40);
 
 	adpt->rx_ctrl &= ~(ALX_MAC_CTRL_RX_EN | ALX_MAC_CTRL_TX_EN);
 	ALX_MEM_W32(adpt, ALX_MAC_CTRL, adpt->rx_ctrl);
@@ -435,7 +441,7 @@ int alx_stop_mac(struct alx_adapter *adpt)
 		ALX_MEM_R32(adpt, ALX_MAC_STS, &val);
 		if (!(val & ALX_MAC_STS_IDLE))
 			break;
-		udelay(10);
+		OS_UDELAY(10);
 	}
 
 	return (ALX_DMA_MAC_RST_TO == i) ? ALX_ERR_RSTMAC : 0;
@@ -446,7 +452,7 @@ int alx_stop_mac(struct alx_adapter *adpt)
  */
 void alx_start_mac(struct alx_adapter *adpt)
 {
-	u32 mac, txq, rxq;
+	A_UINT32 mac, txq, rxq;
 
 	ALX_MEM_R32(adpt, ALX_RXQ0, &rxq);
 	ALX_MEM_W32(adpt, ALX_RXQ0, rxq | ALX_RXQ0_EN);
@@ -466,7 +472,7 @@ void alx_start_mac(struct alx_adapter *adpt)
 }
 
 /* set flow control on MAC side */
-void alx_cfg_mac_fc(struct alx_adapter *adpt, u8 fc)
+void alx_cfg_mac_fc(struct alx_adapter *adpt, A_UINT8 fc)
 {
 	if (fc & ALX_FC_RX)
 		adpt->rx_ctrl |= ALX_MAC_CTRL_RX_EN;
@@ -482,10 +488,10 @@ void alx_cfg_mac_fc(struct alx_adapter *adpt, u8 fc)
 }
 
 /* enable/disable aspm support */
-void alx_enable_aspm(struct alx_adapter *adpt, bool l0s_en, bool l1_en)
+void alx_enable_aspm(struct alx_adapter *adpt, HAL_BOOL l0s_en, HAL_BOOL l1_en)
 {
-	u32 pmctrl;
-	u8 rev = (u8)ALX_REVID(adpt);
+	A_UINT32 pmctrl;
+	A_UINT8 rev = (A_UINT8)ALX_REVID(adpt);
 
 	ALX_MEM_R32(adpt, ALX_PMCTRL, &pmctrl);
 
@@ -520,9 +526,9 @@ void alx_enable_aspm(struct alx_adapter *adpt, bool l0s_en, bool l1_en)
 
 
 /* translate ethtool adv /speed/duplex settting to hw specific value */
-u32 ethadv_to_hw_cfg(struct alx_adapter *adpt, u32 ethadv_cfg)
+A_UINT32 ethadv_to_hw_cfg(struct alx_adapter *adpt, A_UINT32 ethadv_cfg)
 {
-	u32 cfg = 0;
+	A_UINT32 cfg = 0;
 
 	if (ethadv_cfg & ADVERTISED_Autoneg) { /* auto-neg */
 		cfg |= ALX_DRV_PHY_AUTO;
@@ -568,10 +574,10 @@ u32 ethadv_to_hw_cfg(struct alx_adapter *adpt, u32 ethadv_cfg)
  * ethadv:
  *    format from ethtool, we use it for both autoneg and force mode
  */
-int alx_setup_speed_duplex(struct alx_adapter *adpt, u32 ethadv, u8 flowctrl)
+int alx_setup_speed_duplex(struct alx_adapter *adpt, A_UINT32 ethadv, A_UINT8 flowctrl)
 {
-	u16 adv, giga, cr;
-	u32 val;
+	A_UINT16 adv, giga, cr;
+	A_UINT32 val;
 	int err = 0;
 
 	/* clear flag */
@@ -626,18 +632,18 @@ int alx_setup_speed_duplex(struct alx_adapter *adpt, u32 ethadv, u8 flowctrl)
 
 
 /* do post setting on phy if link up/down event occur */
-void alx_post_phy_link(struct alx_adapter *adpt, u16 speed, bool az_en)
+void alx_post_phy_link(struct alx_adapter *adpt, A_UINT16 speed, HAL_BOOL az_en)
 {
-	u16 phy_val, len, agc;
-	u8 revid = (u8)ALX_REVID(adpt);
-	bool adj_th;
+	A_UINT16 phy_val, len, agc;
+	A_UINT8 revid = (A_UINT8)ALX_REVID(adpt);
+	HAL_BOOL adj_th;
 
 	if (revid != ALX_REV_B0 &&
 	    revid != ALX_REV_A1 &&
 	    revid != ALX_REV_A0) {
 		return;
 	}
-	adj_th = (revid == ALX_REV_B0) ? true : false;
+	adj_th = (revid == ALX_REV_B0) ? AH_TRUE : AH_FALSE;
 
 	/* 1000BT/AZ, wrong cable length */
 	if (speed != SPEED_0) { /* link up */
@@ -717,9 +723,9 @@ void alx_post_phy_link(struct alx_adapter *adpt, u16 speed, bool az_en)
  *    1. phy link must be established before calling this function
  *    2. wol option (pattern,magic,link,etc.) is configed before call it.
  */
-int alx_pre_suspend(struct alx_adapter *adpt, u16 speed)
+int alx_pre_suspend(struct alx_adapter *adpt, A_UINT16 speed)
 {
-	u32 master, mac, phy, val;
+	A_UINT32 master, mac, phy, val;
 	int err = 0;
 
 	ALX_MEM_R32(adpt, ALX_MASTER, &master);
@@ -774,16 +780,16 @@ config_reg:
 }
 
 /* wait mdio module to be idle */
-bool __alx_wait_mdio_idle(struct alx_adapter *adpt)
+HAL_BOOL __alx_wait_mdio_idle(struct alx_adapter *adpt)
 {
-	u32 val;
+	A_UINT32 val;
 	int i;
 
 	for (i = 0; i < ALX_MDIO_MAX_AC_TO; i++) {
 		ALX_MEM_R32(adpt, ALX_MDIO, &val);
 		if (!(val & ALX_MDIO_BUSY))
 			break;
-		udelay(10);
+		OS_UDELAY(10);
 	}
 	return i == ALX_MDIO_MAX_AC_TO;
 }
@@ -794,10 +800,10 @@ bool __alx_wait_mdio_idle(struct alx_adapter *adpt)
  * dev: device address (see IEEE 802.3 DEVAD, PRTAD is fixed to 0)
  * reg: register to read
  */
-int __alx_read_phy_core(struct alx_adapter *adpt, bool ext, u8 dev,
-			     u16 reg, u16 *phy_data)
+int __alx_read_phy_core(struct alx_adapter *adpt, HAL_BOOL ext, A_UINT8 dev,
+			     A_UINT16 reg, A_UINT16 *phy_data)
 {
-	u32 val, clk_sel;
+	A_UINT32 val, clk_sel;
 	int err;
 
 	*phy_data = 0;
@@ -829,7 +835,7 @@ int __alx_read_phy_core(struct alx_adapter *adpt, bool ext, u8 dev,
 		err = ALX_ERR_MIIBUSY;
 	else {
 		ALX_MEM_R32(adpt, ALX_MDIO, &val);
-		*phy_data = (u16)FIELD_GETX(val, ALX_MDIO_DATA);
+		*phy_data = (A_UINT16)FIELD_GETX(val, ALX_MDIO_DATA);
 		err = 0;
 	}
 
@@ -842,10 +848,10 @@ int __alx_read_phy_core(struct alx_adapter *adpt, bool ext, u8 dev,
  * dev: device address (see IEEE 802.3 DEVAD, PRTAD is fixed to 0)
  * reg: register to write
  */
-int __alx_write_phy_core(struct alx_adapter *adpt, bool ext, u8 dev,
-		       u16 reg, u16 phy_data)
+int __alx_write_phy_core(struct alx_adapter *adpt, HAL_BOOL ext, A_UINT8 dev,
+		       A_UINT16 reg, A_UINT16 phy_data)
 {
-	u32 val, clk_sel;
+	A_UINT32 val, clk_sel;
 	int err = 0;
 
 	/* use slow clock when it's in hibernation status */
@@ -878,31 +884,31 @@ int __alx_write_phy_core(struct alx_adapter *adpt, bool ext, u8 dev,
 }
 
 /* read from PHY normal register */
-int __alx_read_phy_reg(struct alx_adapter *adpt, u16 reg, u16 *phy_data)
+int __alx_read_phy_reg(struct alx_adapter *adpt, A_UINT16 reg, A_UINT16 *phy_data)
 {
-	return __alx_read_phy_core(adpt, false, 0, reg, phy_data);
+	return __alx_read_phy_core(adpt, AH_FALSE, 0, reg, phy_data);
 }
 
 /* write to PHY normal register */
-int __alx_write_phy_reg(struct alx_adapter *adpt, u16 reg, u16 phy_data)
+int __alx_write_phy_reg(struct alx_adapter *adpt, A_UINT16 reg, A_UINT16 phy_data)
 {
-	return __alx_write_phy_core(adpt, false, 0, reg, phy_data);
+	return __alx_write_phy_core(adpt, AH_FALSE, 0, reg, phy_data);
 }
 
 /* read from PHY extension register */
-int __alx_read_phy_ext(struct alx_adapter *adpt, u8 dev, u16 reg, u16 *pdata)
+int __alx_read_phy_ext(struct alx_adapter *adpt, A_UINT8 dev, A_UINT16 reg, A_UINT16 *pdata)
 {
-	return __alx_read_phy_core(adpt, true, dev, reg, pdata);
+	return __alx_read_phy_core(adpt, AH_TRUE, dev, reg, pdata);
 }
 
 /* write to PHY extension register */
-int __alx_write_phy_ext(struct alx_adapter *adpt, u8 dev, u16 reg, u16 data)
+int __alx_write_phy_ext(struct alx_adapter *adpt, A_UINT8 dev, A_UINT16 reg, A_UINT16 data)
 {
-	return __alx_write_phy_core(adpt, true, dev, reg, data);
+	return __alx_write_phy_core(adpt, AH_TRUE, dev, reg, data);
 }
 
 /* read from PHY debug port */
-int __alx_read_phy_dbg(struct alx_adapter *adpt, u16 reg, u16 *pdata)
+int __alx_read_phy_dbg(struct alx_adapter *adpt, A_UINT16 reg, A_UINT16 *pdata)
 {
 	int err;
 
@@ -916,7 +922,7 @@ int __alx_read_phy_dbg(struct alx_adapter *adpt, u16 reg, u16 *pdata)
 }
 
 /* write to PHY debug port */
-int __alx_write_phy_dbg(struct alx_adapter *adpt, u16 reg, u16 data)
+int __alx_write_phy_dbg(struct alx_adapter *adpt, A_UINT16 reg, A_UINT16 data)
 {
 	int err;
 
@@ -929,76 +935,76 @@ int __alx_write_phy_dbg(struct alx_adapter *adpt, u16 reg, u16 data)
 	return err;
 }
 
-int alx_read_phy_reg(struct alx_adapter *adpt, u16 reg, u16 *phy_data)
+int alx_read_phy_reg(struct alx_adapter *adpt, A_UINT16 reg, A_UINT16 *phy_data)
 {
 	int err;
 
-	spin_lock(&adpt->mdio_lock);
+	OS_SPIN_LOCK(&adpt->mdio_lock);
 	err = __alx_read_phy_reg(adpt, reg, phy_data);
-	spin_unlock(&adpt->mdio_lock);
+	OS_SPIN_UNLOCK(&adpt->mdio_lock);
 
 	return err;
 }
 
-int alx_write_phy_reg(struct alx_adapter *adpt, u16 reg, u16 phy_data)
+int alx_write_phy_reg(struct alx_adapter *adpt, A_UINT16 reg, A_UINT16 phy_data)
 {
 	int err;
 
-	spin_lock(&adpt->mdio_lock);
+	OS_SPIN_LOCK(&adpt->mdio_lock);
 	err = __alx_write_phy_reg(adpt, reg, phy_data);
-	spin_unlock(&adpt->mdio_lock);
+	OS_SPIN_UNLOCK(&adpt->mdio_lock);
 
 	return err;
 }
 
-int alx_read_phy_ext(struct alx_adapter *adpt, u8 dev, u16 reg, u16 *pdata)
+int alx_read_phy_ext(struct alx_adapter *adpt, A_UINT8 dev, A_UINT16 reg, A_UINT16 *pdata)
 {
 	int err;
 
-	spin_lock(&adpt->mdio_lock);
+	OS_SPIN_LOCK(&adpt->mdio_lock);
 	err = __alx_read_phy_ext(adpt, dev, reg, pdata);
-	spin_unlock(&adpt->mdio_lock);
+	OS_SPIN_UNLOCK(&adpt->mdio_lock);
 
 	return err;
 }
 
-int alx_write_phy_ext(struct alx_adapter *adpt, u8 dev, u16 reg, u16 data)
+int alx_write_phy_ext(struct alx_adapter *adpt, A_UINT8 dev, A_UINT16 reg, A_UINT16 data)
 {
 	int err;
 
-	spin_lock(&adpt->mdio_lock);
+	OS_SPIN_LOCK(&adpt->mdio_lock);
 	err = __alx_write_phy_ext(adpt, dev, reg, data);
-	spin_unlock(&adpt->mdio_lock);
+	OS_SPIN_UNLOCK(&adpt->mdio_lock);
 
 	return err;
 }
 
-int alx_read_phy_dbg(struct alx_adapter *adpt, u16 reg, u16 *pdata)
+int alx_read_phy_dbg(struct alx_adapter *adpt, A_UINT16 reg, A_UINT16 *pdata)
 {
 	int err;
 
-	spin_lock(&adpt->mdio_lock);
+	OS_SPIN_LOCK(&adpt->mdio_lock);
 	err = __alx_read_phy_dbg(adpt, reg, pdata);
-	spin_unlock(&adpt->mdio_lock);
+	OS_SPIN_UNLOCK(&adpt->mdio_lock);
 
 	return err;
 }
 
-int alx_write_phy_dbg(struct alx_adapter *adpt, u16 reg, u16 data)
+int alx_write_phy_dbg(struct alx_adapter *adpt, A_UINT16 reg, A_UINT16 data)
 {
 	int err;
 
-	spin_lock(&adpt->mdio_lock);
+	OS_SPIN_LOCK(&adpt->mdio_lock);
 	err = __alx_write_phy_dbg(adpt, reg, data);
-	spin_unlock(&adpt->mdio_lock);
+	OS_SPIN_UNLOCK(&adpt->mdio_lock);
 
 	return err;
 }
 
-u16 alx_get_phy_config(struct alx_adapter *adpt)
+A_UINT16 alx_get_phy_config(struct alx_adapter *adpt)
 {
-	u32 val;
-	u16 phy_val;
+	A_UINT32 val;
+	A_UINT16 phy_val;
 
 	ALX_MEM_R32(adpt, ALX_PHY_CTRL, &val);
 	/* phy in rst */
@@ -1012,28 +1018,28 @@ u16 alx_get_phy_config(struct alx_adapter *adpt)
 
 	alx_read_phy_reg(adpt, ALX_MII_DBG_ADDR, &phy_val);
 	if (ALX_PHY_INITED == phy_val)
-		return (u16) val;
+		return (A_UINT16) val;
 
 	return ALX_DRV_PHY_UNKNOWN;
 }
 
-bool alx_phy_configed(struct alx_adapter *adpt)
+HAL_BOOL alx_phy_configed(struct alx_adapter *adpt)
 {
-	u32 cfg, hw_cfg;
+	A_UINT32 cfg, hw_cfg;
 
 	cfg = ethadv_to_hw_cfg(adpt, adpt->adv_cfg);
 	cfg = FIELD_GETX(cfg, ALX_DRV_PHY);
 	hw_cfg = alx_get_phy_config(adpt);
 	if (hw_cfg == ALX_DRV_PHY_UNKNOWN)
-		return false;
+		return AH_FALSE;
 
 	return cfg == hw_cfg;
 }
 
-int alx_get_phy_link(struct alx_adapter *adpt, bool *link_up, u16 *speed)
+int alx_get_phy_link(struct alx_adapter *adpt, HAL_BOOL *link_up, A_UINT16 *speed)
 {
 	struct pci_dev *pdev = adpt->pdev;
-	u16 bmsr, giga;
+	A_UINT16 bmsr, giga;
 	int err;
 
 	err = alx_read_phy_reg(adpt, MII_BMSR, &bmsr);
@@ -1042,11 +1048,11 @@ int alx_get_phy_link(struct alx_adapter *adpt, bool *link_up, u16 *speed)
 		goto out;
 
 	if (!(bmsr & BMSR_LSTATUS)) {
-		*link_up = false;
+		*link_up = AH_FALSE;
 		goto out;
 	}
 
-	*link_up = true;
+	*link_up = AH_TRUE;
 
 	/* speed/duplex result is saved in PHY Specific Status Register */
 	err = alx_read_phy_reg(adpt, ALX_MII_GIGA_PSSR, &giga);
@@ -1081,7 +1087,7 @@ out:
 
 int alx_clear_phy_intr(struct alx_adapter *adpt)
 {
-	u16 isr;
+	A_UINT16 isr;
 
 	/* clear interrupt status by read it */
 	return alx_read_phy_reg(adpt, ALX_MII_ISR, &isr);
@@ -1089,7 +1095,7 @@ int alx_clear_phy_intr(struct alx_adapter *adpt)
 
 int alx_config_wol(struct alx_adapter *adpt)
 {
-	u32 wol;
+	A_UINT32 wol;
 	int err = 0;
 
 	wol = 0;

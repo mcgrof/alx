@@ -17,15 +17,18 @@
 #ifndef ALX_HW_H_
 #define ALX_HW_H_
 
+#if 0
 #include <linux/types.h>
 #include <linux/mii.h>
+#endif
+
 #include "alx.h"
 
 #define FIELD_GETX(_x, _name)   (((_x) >> (_name##_SHIFT)) & (_name##_MASK))
 #define FIELD_SETS(_x, _name, _v)   (\
 (_x) =                               \
 ((_x) & ~((_name##_MASK) << (_name##_SHIFT)))            |\
-(((u16)(_v) & (_name##_MASK)) << (_name##_SHIFT)))
+(((A_UINT16)(_v) & (_name##_MASK)) << (_name##_SHIFT)))
 #define FIELD_SET32(_x, _name, _v)   (\
 (_x) =                               \
 ((_x) & ~((_name##_MASK) << (_name##_SHIFT)))            |\
@@ -36,28 +39,28 @@
 struct alx_adapter;
 /* function prototype */
 
-int alx_get_perm_macaddr(struct alx_adapter *adpt, u8 *addr);
-void alx_reset_phy(struct alx_adapter *adpt, bool hib_en);
+int alx_get_perm_macaddr(struct alx_adapter *adpt, A_UINT8 *addr);
+void alx_reset_phy(struct alx_adapter *adpt, HAL_BOOL hib_en);
 void alx_reset_pcie(struct alx_adapter *adpt);
-void alx_enable_aspm(struct alx_adapter *adpt, bool l0s_en, bool l1_en);
-int alx_setup_speed_duplex(struct alx_adapter *adpt, u32 ethadv, u8 flowctrl);
-void alx_post_phy_link(struct alx_adapter *adpt, u16 speed, bool az_en);
-int alx_pre_suspend(struct alx_adapter *adpt, u16 speed);
-int alx_read_phy_reg(struct alx_adapter *adpt, u16 reg, u16 *phy_data);
-int alx_write_phy_reg(struct alx_adapter *adpt, u16 reg, u16 phy_data);
-int alx_read_phy_ext(struct alx_adapter *adpt, u8 dev, u16 reg, u16 *pdata);
-int alx_write_phy_ext(struct alx_adapter *adpt, u8 dev, u16 reg, u16 data);
-int alx_read_phy_dbg(struct alx_adapter *adpt, u16 reg, u16 *pdata);
-int alx_write_phy_dbg(struct alx_adapter *adpt, u16 reg, u16 data);
-int alx_get_phy_link(struct alx_adapter *adpt, bool *link_up, u16 *speed);
+void alx_enable_aspm(struct alx_adapter *adpt, HAL_BOOL l0s_en, HAL_BOOL l1_en);
+int alx_setup_speed_duplex(struct alx_adapter *adpt, A_UINT32 ethadv, A_UINT8 flowctrl);
+void alx_post_phy_link(struct alx_adapter *adpt, A_UINT16 speed, HAL_BOOL az_en);
+int alx_pre_suspend(struct alx_adapter *adpt, A_UINT16 speed);
+int alx_read_phy_reg(struct alx_adapter *adpt, A_UINT16 reg, A_UINT16 *phy_data);
+int alx_write_phy_reg(struct alx_adapter *adpt, A_UINT16 reg, A_UINT16 phy_data);
+int alx_read_phy_ext(struct alx_adapter *adpt, A_UINT8 dev, A_UINT16 reg, A_UINT16 *pdata);
+int alx_write_phy_ext(struct alx_adapter *adpt, A_UINT8 dev, A_UINT16 reg, A_UINT16 data);
+int alx_read_phy_dbg(struct alx_adapter *adpt, A_UINT16 reg, A_UINT16 *pdata);
+int alx_write_phy_dbg(struct alx_adapter *adpt, A_UINT16 reg, A_UINT16 data);
+int alx_get_phy_link(struct alx_adapter *adpt, HAL_BOOL *link_up, A_UINT16 *speed);
 int alx_clear_phy_intr(struct alx_adapter *adpt);
 int alx_config_wol(struct alx_adapter *adpt);
-void alx_cfg_mac_fc(struct alx_adapter *adpt, u8 fc);
+void alx_cfg_mac_fc(struct alx_adapter *adpt, A_UINT8 fc);
 void alx_start_mac(struct alx_adapter *adpt);
 int alx_stop_mac(struct alx_adapter *adpt);
 int alx_reset_mac(struct alx_adapter *adpt);
-void alx_set_macaddr(struct alx_adapter *adpt, u8 *addr);
-bool alx_phy_configed(struct alx_adapter *adpt);
+void alx_set_macaddr(struct alx_adapter *adpt, A_UINT8 *addr);
+HAL_BOOL alx_phy_configed(struct alx_adapter *adpt);
 
 /******************************************************************************/
 /* register definition */

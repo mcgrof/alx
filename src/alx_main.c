@@ -23,6 +23,8 @@
 #include <linux/mii.h>
 #include <linux/aer.h>
 
+#include "ah_osdep.h"
+
 #include "alx.h"
 
 char alx_drv_name[] = "alx";
@@ -75,9 +77,9 @@ static inline void alx_cancel_work(struct alx_adapter *adpt)
 	cancel_work_sync(&adpt->task);
 }
 
-void alx_add_mc_addr(struct alx_adapter *adpt, u8 *addr)
+void alx_add_mc_addr(struct alx_adapter *adpt, A_UINT8 *addr)
 {
-	u32 crc32, bit, reg;
+	A_UINT32 crc32, bit, reg;
 
 	crc32 = ether_crc(ETH_ALEN, addr);
 
@@ -161,13 +163,13 @@ static void alx_free_napis(struct alx_adapter *adpt)
 		adpt->qnapi[i] = NULL;
 	}
 }
-static u16 tx_pidx_reg[] = {ALX_TPD_PRI0_PIDX, ALX_TPD_PRI1_PIDX,
+static A_UINT16 tx_pidx_reg[] = {ALX_TPD_PRI0_PIDX, ALX_TPD_PRI1_PIDX,
 			    ALX_TPD_PRI2_PIDX, ALX_TPD_PRI3_PIDX};
-static u16 tx_cidx_reg[] = {ALX_TPD_PRI0_CIDX, ALX_TPD_PRI1_CIDX,
+static A_UINT16 tx_cidx_reg[] = {ALX_TPD_PRI0_CIDX, ALX_TPD_PRI1_CIDX,
 			    ALX_TPD_PRI2_CIDX, ALX_TPD_PRI3_CIDX};
-static u32 tx_vect_mask[] = {ALX_ISR_TX_Q0, ALX_ISR_TX_Q1,
+static A_UINT32 tx_vect_mask[] = {ALX_ISR_TX_Q0, ALX_ISR_TX_Q1,
 			     ALX_ISR_TX_Q2, ALX_ISR_TX_Q3};
-static u32 rx_vect_mask[] = {ALX_ISR_RX_Q0, ALX_ISR_RX_Q1,
+static A_UINT32 rx_vect_mask[] = {ALX_ISR_RX_Q0, ALX_ISR_RX_Q1,
 			     ALX_ISR_RX_Q2, ALX_ISR_RX_Q3,
 			     ALX_ISR_RX_Q4, ALX_ISR_RX_Q5,
 			     ALX_ISR_RX_Q6, ALX_ISR_RX_Q7};
@@ -201,7 +203,7 @@ static int alx_alloc_napis(struct alx_adapter *adpt)
 		txq->p_reg = tx_pidx_reg[i];
 		txq->c_reg = tx_cidx_reg[i];
 		txq->count = adpt->tx_ringsz;
-		txq->qidx = (u16)i;
+		txq->qidx = (A_UINT16)i;
 		np->vec_mask |= tx_vect_mask[i];
 		adpt->imask |= tx_vect_mask[i];
 	}
@@ -216,7 +218,7 @@ static int alx_alloc_napis(struct alx_adapter *adpt)
 		rxq->p_reg = ALX_RFD_PIDX;
 		rxq->c_reg = ALX_RFD_CIDX;
 		rxq->count = adpt->rx_ringsz;
-		rxq->qidx = (u16)i;
+		rxq->qidx = (A_UINT16)i;
 		np->vec_mask |= rx_vect_mask[i];
 		adpt->imask |= rx_vect_mask[i];
 	}
@@ -231,7 +233,7 @@ err_out:
 static int alx_alloc_rings(struct alx_adapter *adpt)
 {
 	struct alx_buffer *bf;
-	u8 *desc;
+	A_UINT8 *desc;
 	dma_addr_t  dma;
 	int i, size, hw_rxrng, offset;
 
@@ -341,7 +343,7 @@ static int alx_alloc_rxring_buf(struct alx_adapter *adpt,
 	struct alx_buffer *cur_buf;
 	struct rfd_desc *rfd;
 	dma_addr_t dma;
-	u16 cur, next, count = 0;
+	A_UINT16 cur, next, count = 0;
 
 	next = cur = rxq->pidx;
 	if (++next == rxq->count)
@@ -381,7 +383,7 @@ static int alx_alloc_rxring_buf(struct alx_adapter *adpt,
 	if (count) {
 		wmb();
 		rxq->pidx = cur;
-		ALX_MEM_W16(adpt, rxq->p_reg, (u16)cur);
+		ALX_MEM_W16(adpt, rxq->p_reg, (A_UINT16)cur);
 	}
 
 	return count;
@@ -390,7 +392,7 @@ static int alx_alloc_rxring_buf(struct alx_adapter *adpt,
 static void alx_free_rxring_buf(struct alx_rx_queue *rxq)
 {
 	struct alx_buffer *cur_buf;
-	u16 i;
+	A_UINT16 i;
 
 	if (rxq == NULL)
 		return;
@@ -506,7 +508,7 @@ static void alx_free_all_ring_resources(struct alx_adapter *adpt)
 
 static inline int alx_tpd_avail(struct alx_tx_queue *txq)
 {
-	u16 cidx = atomic_read(&txq->cidx);
+	A_UINT16 cidx = atomic_read(&txq->cidx);
 
 	return txq->pidx >= cidx ?
 		txq->count + cidx - txq->pidx - 1 :
@@ -515,16 +517,16 @@ static inline int alx_tpd_avail(struct alx_tx_queue *txq)
 
 
 
-static bool alx_clean_tx_irq(struct alx_tx_queue *txq)
+static HAL_BOOL alx_clean_tx_irq(struct alx_tx_queue *txq)
 {
 	struct alx_adapter *adpt = netdev_priv(txq->netdev);
 	struct netdev_queue *netque;
-	u16 hw_cidx, sw_cidx;
+	A_UINT16 hw_cidx, sw_cidx;
 	unsigned int total_bytes = 0, total_packets = 0;
 	int budget = ALX_DEFAULT_TX_WORK;
 
 	if (ALX_FLAG(adpt, HALT))
-		return true;
+		return AH_TRUE;
 
 	netque = netdev_get_tx_queue(adpt->netdev, txq->qidx);
 	sw_cidx = atomic_read(&txq->cidx);
@@ -563,12 +565,12 @@ static bool alx_clean_tx_irq(struct alx_tx_queue *txq)
 	return sw_cidx == hw_cidx;
 }
 
-static inline bool alx_skb_dequeue_n(struct alx_rx_queue *rxq, int max_pkts,
+static inline HAL_BOOL alx_skb_dequeue_n(struct alx_rx_queue *rxq, int max_pkts,
 				     struct sk_buff_head *list)
 {
 	struct alx_adapter *adpt = netdev_priv(rxq->netdev);
-	bool use_lock = !ALX_FLAG(adpt, CAP_MRQ);
-	bool empty;
+	HAL_BOOL use_lock = !ALX_FLAG(adpt, CAP_MRQ);
+	HAL_BOOL empty;
 	struct sk_buff *skb;
 	int count = 0;
 
@@ -596,7 +598,7 @@ static inline void alx_skb_queue_tail(struct alx_rx_queue *rxq,
 				      struct sk_buff *skb)
 {
 	struct alx_adapter *adpt = netdev_priv(rxq->netdev);
-	bool use_lock = !ALX_FLAG(adpt, CAP_MRQ);
+	HAL_BOOL use_lock = !ALX_FLAG(adpt, CAP_MRQ);
 
 	if (use_lock)
 		spin_lock(&rxq->list.lock);
@@ -607,18 +609,18 @@ static inline void alx_skb_queue_tail(struct alx_rx_queue *rxq,
 		spin_unlock(&rxq->list.lock);
 }
 
-static bool alx_dispatch_skb(struct alx_rx_queue *rxq)
+static HAL_BOOL alx_dispatch_skb(struct alx_rx_queue *rxq)
 {
 	struct alx_adapter *adpt = netdev_priv(rxq->netdev);
 	struct rrd_desc *rrd;
 	struct alx_buffer *rxb;
 	struct sk_buff *skb;
-	u16 length, rfd_cleaned = 0;
+	A_UINT16 length, rfd_cleaned = 0;
 	struct alx_rx_queue *tmp_rxq;
 	int qnum;
 
 	if (test_and_set_bit(ALX_RQ_USING, &rxq->flag))
-		return false;
+		return AH_FALSE;
 
 	while (1) {
 		rrd = rxq->rrd_hdr + rxq->rrd_cidx;
@@ -634,7 +636,7 @@ static bool alx_dispatch_skb(struct alx_rx_queue *rxq)
 			/* reset chip */
 			ALX_FLAG_SET(adpt, TASK_RESET);
 			alx_schedule_work(adpt);
-			return true;
+			return AH_TRUE;
 		}
 		rxb = rxq->bf_info + rxq->cidx;
 		dma_unmap_single(rxq->dev,
@@ -679,7 +681,7 @@ static bool alx_dispatch_skb(struct alx_rx_queue *rxq)
 		}
 		/* vlan tag */
 		if (rrd->word3 & (1 << RRD_VLTAGGED_SHIFT)) {
-			u16 tag = ntohs(FIELD_GETX(rrd->word2, RRD_VLTAG));
+			A_UINT16 tag = ntohs(FIELD_GETX(rrd->word2, RRD_VLTAG));
 			__vlan_hwaccel_put_tag(skb, ntohs(tag));
 		}
 		qnum = FIELD_GETX(rrd->word2, RRD_RSSQ) % adpt->nr_rxq;
@@ -703,7 +705,7 @@ next_pkt:
 
 	clear_bit(ALX_RQ_USING, &rxq->flag);
 
-	return true;
+	return AH_TRUE;
 }
 
 static inline struct alx_rx_queue *alx_hw_rxq(struct alx_rx_queue *rxq)
@@ -715,7 +717,7 @@ static inline struct alx_rx_queue *alx_hw_rxq(struct alx_rx_queue *rxq)
 
 static void __alx_configure_rss(struct alx_adapter *adpt)
 {
-	u32 ctrl;
+	A_UINT32 ctrl;
 	int i;
 
 	ALX_MEM_R32(adpt, ALX_RXQ0, &ctrl);
@@ -753,11 +755,11 @@ static inline struct napi_struct *alx_rxq_to_napi(
 	return &adpt->qnapi[rxq->qidx]->napi;
 }
 
-static bool alx_clean_rx_irq(struct alx_rx_queue *rxq, int budget)
+static HAL_BOOL alx_clean_rx_irq(struct alx_rx_queue *rxq, int budget)
 {
 	struct sk_buff_head list;
 	int empty;
-	bool collect;
+	HAL_BOOL collect;
 
 	__skb_queue_head_init(&list);
 	collect = alx_dispatch_skb(alx_hw_rxq(rxq));
@@ -826,9 +828,9 @@ static void alx_disable_msix(struct alx_adapter *adpt)
 	ALX_FLAG_CLEAR(adpt, USING_MSIX);
 }
 
-static void alx_mask_msix(struct alx_adapter *adpt, int index, bool mask)
+static void alx_mask_msix(struct alx_adapter *adpt, int index, HAL_BOOL mask)
 {
-	u32 reg, val;
+	A_UINT32 reg, val;
 
 	reg = ALX_MSIX_ENTRY_BASE + index * PCI_MSIX_ENTRY_SIZE +
 		   PCI_MSIX_ENTRY_VECTOR_CTRL;
@@ -870,7 +872,7 @@ static void alx_irq_enable(struct alx_adapter *adpt)
 
 	/* enable all individual MSIX IRQs */
 	for (i = 0; i < adpt->nr_vec; i++)
-		alx_mask_msix(adpt, i, false);
+		alx_mask_msix(adpt, i, AH_FALSE);
 }
 
 static void alx_irq_disable(struct alx_adapter *adpt)
@@ -885,7 +887,7 @@ static void alx_irq_disable(struct alx_adapter *adpt)
 
 	if (ALX_FLAG(adpt, USING_MSIX)) {
 		for (i = 0; i < adpt->nr_vec; i++) {
-			alx_mask_msix(adpt, i, true);
+			alx_mask_msix(adpt, i, AH_TRUE);
 			synchronize_irq(adpt->msix_ent[i].vector);
 		}
 	} else {
@@ -897,7 +899,7 @@ static int alx_request_irq(struct alx_adapter *adpt)
 {
 	struct pci_dev *pdev = adpt->pdev;
 	int err;
-	u32 msi_ctrl;
+	A_UINT32 msi_ctrl;
 
 	adpt->imask = ALX_ISR_MISC;
 	msi_ctrl = FIELDX(ALX_MSI_RETRANS_TM, adpt->imt >> 1);
@@ -1003,17 +1005,17 @@ static int __devinit alx_identify_hw(struct alx_adapter *adpt)
 	return err;
 }
 
-static bool __devinit alx_get_phy_id(struct alx_adapter *adpt)
+static HAL_BOOL __devinit alx_get_phy_id(struct alx_adapter *adpt)
 {
 	/* prtad is fixed to 0 for all of chips */
 	if (mdio45_probe(&adpt->mdio, 0))
-		return false;
+		return AH_FALSE;
 
 	if (alx_read_phy_reg(adpt, MII_PHYSID1, &adpt->phy_id[0]) ||
 	    alx_read_phy_reg(adpt, MII_PHYSID2, &adpt->phy_id[1]))
-		return false;
+		return AH_FALSE;
 
-	return true;
+	return AH_TRUE;
 }
 
 /* some issues are relavant to specific platforms
@@ -1021,11 +1023,11 @@ static bool __devinit alx_get_phy_id(struct alx_adapter *adpt)
  * vendor id, subsystem id and revision number
  */
 struct alx_platform_patch {
-	u16 pci_did;				/* pci device id */
-	u8  pci_rev;				/* pci revision id */
-	u16 subsystem_vid;
-	u16 subsystem_did;
-	u32 pflag;				/* patch flag */
+	A_UINT16 pci_did;				/* pci device id */
+	A_UINT8  pci_rev;				/* pci revision id */
+	A_UINT16 subsystem_vid;
+	A_UINT16 subsystem_did;
+	A_UINT32 pflag;				/* patch flag */
 #define ALX_PF_LINK		0x00001		/* PHY link issue */
 #define ALX_PF_HIB		0x00002		/* Hibernatation issue */
 #define ALX_PF_ANY_REV		0x10000		/* not care revision number */
@@ -1047,15 +1049,15 @@ static void __devinit alx_patch_assign(struct alx_adapter *adpt)
 		    (plats[i].pflag & ALX_PF_ANY_REV ||
 		     plats[i].pci_rev == adpt->pdev->revision)) {
 			if (plats[i].pflag & ALX_PF_LINK)
-				adpt->lnk_patch = true;
+				adpt->lnk_patch = AH_TRUE;
 			if (plats[i].pflag & ALX_PF_HIB)
-				adpt->hib_patch = true;
+				adpt->hib_patch = AH_TRUE;
 		}
 		i++;
 	}
 }
 
-static const u8 def_rss_key[40] __devinitdata = {
+static const A_UINT8 def_rss_key[40] __devinitdata = {
 	0xE2, 0x91, 0xD7, 0x3D, 0x18, 0x05, 0xEC, 0x6C,
 	0x2A, 0x94, 0xB3, 0x0D, 0xA5, 0x4F, 0x2B, 0xEC,
 	0xEA, 0x49, 0xAF, 0x7C, 0xE2, 0x14, 0xAD, 0x3D,
@@ -1066,7 +1068,7 @@ static const u8 def_rss_key[40] __devinitdata = {
 static void alx_init_def_rss_idt(struct alx_adapter *adpt)
 {
 	int i, x, y;
-	u32 val;
+	A_UINT32 val;
 
 	for (i = 0; i < adpt->rss_idt_size; i++) {
 		val = ethtool_rxfh_indir_default(i, adpt->nr_rxq);
@@ -1106,7 +1108,7 @@ static int __devinit alx_init_sw(struct alx_adapter *adpt)
 	adpt->sleep_ctrl = ALX_SLEEP_WOL_MAGIC | ALX_SLEEP_WOL_PHY;
 	adpt->imt = 200;	/* 200us */
 	adpt->dma_chnl = adpt->max_dma_chnl;
-	adpt->link_up = false;	/* PHY init status */
+	adpt->link_up = AH_FALSE;	/* PHY init status */
 	adpt->link_duplex = 0;
 	adpt->link_speed = SPEED_0;
 	adpt->adv_cfg = ADVERTISED_Autoneg |
@@ -1201,9 +1203,9 @@ static int alx_change_mtu(struct net_device *netdev, int new_mtu)
  */
 static void alx_configure(struct alx_adapter *adpt)
 {
-	u32 val, raw_mtu, max_payload;
-	u16 val16;
-	u8 chip_rev = ALX_REVID(adpt);
+	A_UINT32 val, raw_mtu, max_payload;
+	A_UINT16 val16;
+	A_UINT8 chip_rev = ALX_REVID(adpt);
 
 	/* mac address */
 	alx_set_macaddr(adpt, adpt->mac_addr);
@@ -1347,7 +1349,7 @@ static int __alx_open(struct alx_adapter *adpt)
 		napi_enable(&(adpt->qnapi[i]->napi));
 
 	/* clear old interrupts */
-	ALX_MEM_W32(adpt, ALX_ISR, (u32)~ALX_ISR_DIS);
+	ALX_MEM_W32(adpt, ALX_ISR, (A_UINT32)~ALX_ISR_DIS);
 
 	alx_irq_enable(adpt);
 
@@ -1375,7 +1377,7 @@ static void alx_halt(struct alx_adapter *adpt)
 	/* stop TX/RX */
 	alx_stop_mac(adpt);
 	/* disable L0S/L1 */
-	alx_enable_aspm(adpt, false, false);
+	alx_enable_aspm(adpt, AH_FALSE, AH_FALSE);
 
 	netif_carrier_off(netdev);
 	for (i = 0; i < adpt->nr_napi; i++)
@@ -1404,7 +1406,7 @@ static void alx_activate(struct alx_adapter *adpt)
 		napi_enable(&(adpt->qnapi[i]->napi));
 
 	/* clear old interrupts */
-	ALX_MEM_W32(adpt, ALX_ISR, (u32)~ALX_ISR_DIS);
+	ALX_MEM_W32(adpt, ALX_ISR, (A_UINT32)~ALX_ISR_DIS);
 
 	alx_irq_enable(adpt);
 
@@ -1423,7 +1425,7 @@ static void __alx_stop(struct alx_adapter *adpt)
 	alx_free_all_ring_resources(adpt);
 }
 
-static bool alx_enable_msix(struct alx_adapter *adpt)
+static HAL_BOOL alx_enable_msix(struct alx_adapter *adpt)
 {
 	int nr_txq, nr_rxq, vec_req;
 	int i, err;
@@ -1437,7 +1439,7 @@ static bool alx_enable_msix(struct alx_adapter *adpt)
 	if (vec_req  <= 2) {
 		netdev_info(adpt->netdev,
 			    "cpu core num is less, MSI-X isn't necessary\n");
-		return false; /* try msi */
+		return AH_FALSE; /* try msi */
 	}
 
 	adpt->msix_ent = kcalloc(vec_req,
@@ -1445,7 +1447,7 @@ static bool alx_enable_msix(struct alx_adapter *adpt)
 				 GFP_KERNEL);
 	if (!adpt->msix_ent) {
 		netdev_info(adpt->netdev, "can't alloc msix entries\n");
-		return false;
+		return AH_FALSE;
 	}
 	for (i = 0; i < vec_req; i++)
 		adpt->msix_ent[i].entry = i;
@@ -1455,7 +1457,7 @@ static bool alx_enable_msix(struct alx_adapter *adpt)
 		kfree(adpt->msix_ent);
 		adpt->msix_ent = NULL;
 		netdev_info(adpt->netdev, "can't enable MSI-X interrupt\n");
-		return false;
+		return AH_FALSE;
 	}
 
 	adpt->nr_txq = nr_txq;
@@ -1463,7 +1465,7 @@ static bool alx_enable_msix(struct alx_adapter *adpt)
 	adpt->nr_vec = vec_req;
 	adpt->nr_napi = vec_req - 1;
 
-	return true;
+	return AH_TRUE;
 }
 
 static void alx_init_intr(struct alx_adapter *adpt)
@@ -1489,11 +1491,11 @@ static void alx_init_ring_ptrs(struct alx_adapter *adpt)
 {
 	struct alx_napi *np;
 	int i, tx_idx, rx_idx;
-	u32 addr_hi;
-	u16 txring_header_reg[] = {ALX_TPD_PRI0_ADDR_LO, ALX_TPD_PRI1_ADDR_LO,
+	A_UINT32 addr_hi;
+	A_UINT16 txring_header_reg[] = {ALX_TPD_PRI0_ADDR_LO, ALX_TPD_PRI1_ADDR_LO,
 				   ALX_TPD_PRI2_ADDR_LO, ALX_TPD_PRI3_ADDR_LO};
-	u16 rfdring_header_reg[] = {ALX_RFD_ADDR_LO};
-	u16 rrdring_header_reg[] = {ALX_RRD_ADDR_LO};
+	A_UINT16 rfdring_header_reg[] = {ALX_RFD_ADDR_LO};
+	A_UINT16 rrdring_header_reg[] = {ALX_RRD_ADDR_LO};
 
 	tx_idx = 0;
 	rx_idx = 0;
@@ -1531,7 +1533,7 @@ static void alx_init_ring_ptrs(struct alx_adapter *adpt)
 	ALX_MEM_W32(adpt, ALX_SRAM9, ALX_SRAM_LOAD_PTR);
 }
 
-static void alx_show_speed(struct net_device *dev, u16 speed)
+static void alx_show_speed(struct net_device *dev, A_UINT16 speed)
 {
 	char *desc;
 
@@ -1551,8 +1553,8 @@ static void alx_show_speed(struct net_device *dev, u16 speed)
 
 static void alx_check_link(struct alx_adapter *adpt)
 {
-	u16 speed, old_speed;
-	bool link_up;
+	A_UINT16 speed, old_speed;
+	HAL_BOOL link_up;
 	int i, err;
 
 	if (ALX_FLAG(adpt, HALT))
@@ -1578,7 +1580,7 @@ static void alx_check_link(struct alx_adapter *adpt)
 		alx_show_speed(adpt->netdev, speed);
 		adpt->link_duplex = speed % 10;
 		adpt->link_speed = speed - adpt->link_duplex;
-		adpt->link_up = true;
+		adpt->link_up = AH_TRUE;
 		alx_post_phy_link(adpt, adpt->link_speed,
 				  ALX_FLAG(adpt, CAP_AZ));
 
@@ -1596,12 +1598,12 @@ static void alx_check_link(struct alx_adapter *adpt)
 
 	/* link changed from 'up' to 'down' */
 	netif_carrier_off(adpt->netdev);
-	adpt->link_up = false;
+	adpt->link_up = AH_FALSE;
 	adpt->link_speed = SPEED_0;
 	netdev_info(adpt->netdev, "NIC Link Down\n");
 
 	alx_stop_mac(adpt);
-	alx_enable_aspm(adpt, false, ALX_FLAG(adpt, CAP_L1));
+	alx_enable_aspm(adpt, AH_FALSE, ALX_FLAG(adpt, CAP_L1));
 	alx_post_phy_link(adpt, SPEED_0, ALX_FLAG(adpt, CAP_AZ));
 
 	/* free any pending tx skbs */
@@ -1645,11 +1647,11 @@ static int alx_stop(struct net_device *netdev)
 	return 0;
 }
 
-static int alx_select_powersaving_speed(struct alx_adapter *adpt, u16 *speed)
+static int alx_select_powersaving_speed(struct alx_adapter *adpt, A_UINT16 *speed)
 {
 	int i, err;
-	u16 spd, lpa;
-	bool linkup;
+	A_UINT16 spd, lpa;
+	HAL_BOOL linkup;
 
 	err = alx_get_phy_link(adpt, &linkup, &spd);
 	if (err)
@@ -1687,8 +1689,8 @@ static int alx_select_powersaving_speed(struct alx_adapter *adpt, u16 *speed)
 
 		/* wait for linkup */
 		for (i = 0; i < ALX_MAX_SETUP_LNK_CYCLE; i++) {
-			u16 speed2;
-			bool link_on;
+			A_UINT16 speed2;
+			HAL_BOOL link_on;
 
 			msleep(100);
 			err = alx_get_phy_link(adpt, &link_on, &speed2);
@@ -1710,12 +1712,12 @@ out:
 	return err;
 }
 
-static int __alx_shutdown(struct pci_dev *pdev, bool *wol_en)
+static int __alx_shutdown(struct pci_dev *pdev, HAL_BOOL *wol_en)
 {
 	struct alx_adapter *adpt = pci_get_drvdata(pdev);
 	struct net_device *netdev = adpt->netdev;
 	int err;
-	u16 speed;
+	A_UINT16 speed;
 
 	netif_device_detach(netdev);
 	if (netif_running(netdev))
@@ -1737,10 +1739,10 @@ static int __alx_shutdown(struct pci_dev *pdev, bool *wol_en)
 	if (err)
 		goto out;
 
-	*wol_en = false;
+	*wol_en = AH_FALSE;
 	if (adpt->sleep_ctrl & ALX_SLEEP_ACTIVE) {
-		device_set_wakeup_enable(&pdev->dev, true);
-		*wol_en = true;
+		device_set_wakeup_enable(&pdev->dev, AH_TRUE);
+		*wol_en = AH_TRUE;
 	}
 
 	pci_disable_device(pdev);
@@ -1752,7 +1754,7 @@ out:
 static void alx_shutdown(struct pci_dev *pdev)
 {
 	int err;
-	bool wol_en;
+	HAL_BOOL wol_en;
 
 	err = __alx_shutdown(pdev, &wol_en);
 	if (likely(!err)) {
@@ -1769,7 +1771,7 @@ static int alx_suspend(struct device *dev)
 {
 	struct pci_dev *pdev = to_pci_dev(dev);
 	int err;
-	bool wol_en;
+	HAL_BOOL wol_en;
 
 	err = __alx_shutdown(pdev, &wol_en);
 	if (unlikely(err)) {
@@ -1779,7 +1781,7 @@ static int alx_suspend(struct device *dev)
 	if (wol_en) {
 		pci_prepare_to_sleep(pdev);
 	} else {
-		pci_wake_from_d3(pdev, false);
+		pci_wake_from_d3(pdev, AH_FALSE);
 		pci_set_power_state(pdev, PCI_D3hot);
 	}
 
@@ -1804,7 +1806,7 @@ static int alx_resume(struct device *dev)
 	pci_enable_wake(pdev, PCI_D3hot, 0);
 	pci_enable_wake(pdev, PCI_D3cold, 0);
 
-	adpt->link_up = false;
+	adpt->link_up = AH_FALSE;
 	adpt->link_speed = SPEED_0;
 
 	alx_reset_pcie(adpt);
@@ -1839,8 +1841,8 @@ static int alx_resume(struct device *dev)
 /* alx_update_hw_stats - Update the board statistics counters. */
 static void alx_update_hw_stats(struct alx_adapter *adpt)
 {
-	u16 reg;
-	u32 data;
+	A_UINT16 reg;
+	A_UINT32 data;
 	unsigned long *p;
 
 	if (ALX_FLAG(adpt, HALT) || ALX_FLAG(adpt, RESETING))
@@ -1966,10 +1968,10 @@ static irqreturn_t alx_msix_ring(int irq, void *data)
 {
 	struct alx_napi *np = data;
 	struct alx_adapter *adpt = np->adpt;
-	u32 intr;
+	A_UINT32 intr;
 
 	/* mask interrupt to ACK chip */
-	alx_mask_msix(adpt, np->vec_idx, true);
+	alx_mask_msix(adpt, np->vec_idx, AH_TRUE);
 	ALX_MEM_R32(adpt, ALX_ISR, &intr);
 	intr &= ~np->vec_mask;
 
@@ -1982,12 +1984,12 @@ static irqreturn_t alx_msix_ring(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
-static inline bool alx_handle_intr_misc(struct alx_adapter *adpt, u32 intr)
+static inline HAL_BOOL alx_handle_intr_misc(struct alx_adapter *adpt, A_UINT32 intr)
 {
 	if (unlikely(intr & ALX_ISR_FATAL)) {
 		ALX_FLAG_SET(adpt, TASK_RESET);
 		alx_schedule_work(adpt);
-		return true;
+		return AH_TRUE;
 	}
 
 	if (intr & ALX_ISR_ALERT)
@@ -2009,16 +2011,16 @@ static inline bool alx_handle_intr_misc(struct alx_adapter *adpt, u32 intr)
 		alx_schedule_work(adpt);
 	}
 
-	return false;
+	return AH_FALSE;
 }
 
 static irqreturn_t alx_intr_msix_misc(int irq, void *data)
 {
 	struct alx_adapter *adpt = data;
-	u32 intr;
+	A_UINT32 intr;
 
 	/* mask interrupt to ACK chip */
-	alx_mask_msix(adpt, 0, true);
+	alx_mask_msix(adpt, 0, AH_TRUE);
 
 	/* read interrupt status */
 	ALX_MEM_R32(adpt, ALX_ISR, &intr);
@@ -2032,12 +2034,12 @@ static irqreturn_t alx_intr_msix_misc(int irq, void *data)
 
 	/* enable interrupt again */
 	if (!ALX_FLAG(adpt, HALT))
-		alx_mask_msix(adpt, 0, false);
+		alx_mask_msix(adpt, 0, AH_FALSE);
 
 	return IRQ_HANDLED;
 }
 
-static inline irqreturn_t alx_intr_1(struct alx_adapter *adpt, u32 intr)
+static inline irqreturn_t alx_intr_1(struct alx_adapter *adpt, A_UINT32 intr)
 {
 	/* ACK interrupt */
 	ALX_MEM_W32(adpt, ALX_ISR, ALX_ISR_DIS);
@@ -2062,7 +2064,7 @@ static inline irqreturn_t alx_intr_1(struct alx_adapter *adpt, u32 intr)
 static irqreturn_t alx_intr_msi(int irq, void *data)
 {
 	struct alx_adapter *adpt = data;
-	u32 intr;
+	A_UINT32 intr;
 
 	/* read interrupt status */
 	ALX_MEM_R32(adpt, ALX_ISR, &intr);
@@ -2073,7 +2075,7 @@ static irqreturn_t alx_intr_msi(int irq, void *data)
 static irqreturn_t alx_intr_legacy(int irq, void *data)
 {
 	struct alx_adapter *adpt = data;
-	u32 intr;
+	A_UINT32 intr;
 
 	/* read interrupt status */
 	ALX_MEM_R32(adpt, ALX_ISR, &intr);
@@ -2088,7 +2090,7 @@ static int alx_poll(struct napi_struct *napi, int budget)
 {
 	struct alx_napi *np = container_of(napi, struct alx_napi, napi);
 	struct alx_adapter *adpt = np->adpt;
-	bool complete = true;
+	HAL_BOOL complete = AH_TRUE;
 
 	if (np->txq)
 		complete = alx_clean_tx_irq(np->txq);
@@ -2104,7 +2106,7 @@ static int alx_poll(struct napi_struct *napi, int budget)
 	/* enable interrupt */
 	if (!ALX_FLAG(adpt, HALT)) {
 		if (ALX_FLAG(adpt, USING_MSIX))
-			alx_mask_msix(adpt, np->vec_idx, false);
+			alx_mask_msix(adpt, np->vec_idx, AH_FALSE);
 		else
 			ALX_MEM_W32(adpt, ALX_IMR, adpt->imask);
 		ALX_MEM_FLUSH(adpt);
@@ -2138,7 +2140,7 @@ static inline int alx_tpd_req(struct sk_buff *skb)
 
 static int alx_tx_csum(struct sk_buff *skb, struct tpd_desc *first)
 {
-	u8 cso, css;
+	A_UINT8 cso, css;
 
 	if (skb->ip_summed != CHECKSUM_PARTIAL)
 		return 0;
@@ -2226,7 +2228,7 @@ static int alx_tx_map(struct alx_tx_queue *txq, struct sk_buff *skb)
 	struct tpd_desc *tpd, *first_tpd;
 	struct alx_buffer *buf, *first_buf;
 	dma_addr_t dma;
-	u16 producer, maplen, f;
+	A_UINT16 producer, maplen, f;
 
 	producer = txq->pidx;
 
@@ -2400,10 +2402,10 @@ static void alx_tx_timeout(struct net_device *dev)
 }
 
 static int alx_mdio_read(struct net_device *netdev,
-			 int prtad, int devad, u16 addr)
+			 int prtad, int devad, A_UINT16 addr)
 {
 	struct alx_adapter *adpt = netdev_priv(netdev);
-	u16 val;
+	A_UINT16 val;
 	int err;
 
 	if (prtad != adpt->mdio.prtad)
@@ -2418,7 +2420,7 @@ static int alx_mdio_read(struct net_device *netdev,
 }
 
 static int alx_mdio_write(struct net_device *netdev,
-			  int prtad, int devad, u16 addr, u16 val)
+			  int prtad, int devad, A_UINT16 addr, A_UINT16 val)
 {
 	struct alx_adapter *adpt = netdev_priv(netdev);
 	int err;
@@ -2489,7 +2491,7 @@ alx_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	struct net_device *netdev;
 	struct alx_adapter *adpt = NULL;
-	bool phy_cfged;
+	HAL_BOOL phy_cfged;
 	int bars, pm_cap, err;
 	static int cards_found;
 
