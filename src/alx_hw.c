@@ -61,13 +61,13 @@ read_mcadr:
 			ALX_MEM_R32(adpt, ALX_SLD, &val);
 			if ((val & (ALX_SLD_STAT | ALX_SLD_START)) == 0)
 				break;
-			mdelay(1);
+			OS_MDELAY(1);
 		}
 		if (i == ALX_SLD_MAX_TO)
 			goto out;
 		ALX_MEM_W32(adpt, ALX_SLD, val | ALX_SLD_START);
 		for (i = 0; i < ALX_SLD_MAX_TO; i++) {
-			mdelay(1);
+			OS_MDELAY(1);
 			ALX_MEM_R32(adpt, ALX_SLD, &val);
 			if ((val & ALX_SLD_START) == 0)
 				break;
@@ -88,13 +88,13 @@ read_mcadr:
 					    ALX_EFLD_START)) == 0) {
 					break;
 				}
-				mdelay(1);
+				OS_MDELAY(1);
 			}
 			if (i == ALX_SLD_MAX_TO)
 				goto out;
 			ALX_MEM_W32(adpt, ALX_EFLD, val | ALX_EFLD_START);
 			for (i = 0; i < ALX_SLD_MAX_TO; i++) {
-				mdelay(1);
+				OS_MDELAY(1);
 				ALX_MEM_R32(adpt, ALX_EFLD, &val);
 				if ((val & ALX_EFLD_START) == 0)
 					break;
@@ -170,7 +170,7 @@ void alx_reset_osc(struct alx_adapter *adpt, A_UINT8 rev)
 		ALX_MEM_W32(adpt, ALX_MISC, val);
 	}
 
-	udelay(20);
+	OS_UDELAY(20);
 }
 
 int alx_reset_mac(struct alx_adapter *adpt)
@@ -212,22 +212,22 @@ int alx_reset_mac(struct alx_adapter *adpt)
 		    val | ALX_MASTER_DMA_MAC_RST | ALX_MASTER_OOB_DIS);
 
 	/* make sure it's real idle */
-	udelay(10);
+	OS_UDELAY(10);
 	for (i = 0; i < ALX_DMA_MAC_RST_TO; i++) {
 		ALX_MEM_R32(adpt, ALX_RFD_PIDX, &val);
 		if (val == 0)
 			break;
-		udelay(10);
+		OS_UDELAY(10);
 	}
 	for (; i < ALX_DMA_MAC_RST_TO; i++) {
 		ALX_MEM_R32(adpt, ALX_MASTER, &val);
 		if ((val & ALX_MASTER_DMA_MAC_RST) == 0)
 			break;
-		udelay(10);
+		OS_UDELAY(10);
 	}
 	if (i == ALX_DMA_MAC_RST_TO)
 		return ALX_ERR_RSTMAC;
-	udelay(10);
+	OS_UDELAY(10);
 
 	if (a_cr) {
 		/* set ALX_MASTER_PCLKSEL_SRDS (affect by soft-rst, PERST) */
@@ -249,7 +249,7 @@ int alx_reset_mac(struct alx_adapter *adpt)
 	if (ALX_REV_A(rev))
 		val &= ~ALX_MISC_ISO_EN;
 	ALX_MEM_W32(adpt, ALX_MISC, val);
-	udelay(20);
+	OS_UDELAY(20);
 
 	/* driver control speed/duplex, hash-alg */
 	ALX_MEM_W32(adpt, ALX_MAC_CTRL, adpt->rx_ctrl);
@@ -284,12 +284,12 @@ void alx_reset_phy(struct alx_adapter *adpt, HAL_BOOL hib_en)
 	else
 		val &= ~(ALX_PHY_CTRL_HIB_PULSE | ALX_PHY_CTRL_HIB_EN);
 	ALX_MEM_W32(adpt, ALX_PHY_CTRL, val);
-	udelay(10); /* 5us is enough */
+	OS_UDELAY(10); /* 5us is enough */
 	ALX_MEM_W32(adpt, ALX_PHY_CTRL, val | ALX_PHY_CTRL_DSPRST_OUT);
 
 	/* delay 800us */
 	for (i = 0; i < ALX_PHY_CTRL_DSPRST_TO; i++)
-		udelay(10);
+		OS_UDELAY(10);
 
 	/* phy power saving & hib */
 	if (hib_en) {
@@ -415,7 +415,7 @@ void alx_reset_pcie(struct alx_adapter *adpt)
 			ALX_FLAG(adpt, CAP_L0S),
 			ALX_FLAG(adpt, CAP_L1));
 
-	udelay(10);
+	OS_UDELAY(10);
 }
 
 /* alx_stop_mac
@@ -432,7 +432,7 @@ int alx_stop_mac(struct alx_adapter *adpt)
 	ALX_MEM_R32(adpt, ALX_TXQ0, &txq);
 	ALX_MEM_W32(adpt, ALX_TXQ0, txq & ~ALX_TXQ0_EN);
 
-	udelay(40);
+	OS_UDELAY(40);
 
 	adpt->rx_ctrl &= ~(ALX_MAC_CTRL_RX_EN | ALX_MAC_CTRL_TX_EN);
 	ALX_MEM_W32(adpt, ALX_MAC_CTRL, adpt->rx_ctrl);
@@ -441,7 +441,7 @@ int alx_stop_mac(struct alx_adapter *adpt)
 		ALX_MEM_R32(adpt, ALX_MAC_STS, &val);
 		if (!(val & ALX_MAC_STS_IDLE))
 			break;
-		udelay(10);
+		OS_UDELAY(10);
 	}
 
 	return (ALX_DMA_MAC_RST_TO == i) ? ALX_ERR_RSTMAC : 0;
@@ -789,7 +789,7 @@ HAL_BOOL __alx_wait_mdio_idle(struct alx_adapter *adpt)
 		ALX_MEM_R32(adpt, ALX_MDIO, &val);
 		if (!(val & ALX_MDIO_BUSY))
 			break;
-		udelay(10);
+		OS_UDELAY(10);
 	}
 	return i == ALX_MDIO_MAX_AC_TO;
 }
@@ -939,9 +939,9 @@ int alx_read_phy_reg(struct alx_adapter *adpt, A_UINT16 reg, A_UINT16 *phy_data)
 {
 	int err;
 
-	spin_lock(&adpt->mdio_lock);
+	OS_SPIN_LOCK(&adpt->mdio_lock);
 	err = __alx_read_phy_reg(adpt, reg, phy_data);
-	spin_unlock(&adpt->mdio_lock);
+	OS_SPIN_UNLOCK(&adpt->mdio_lock);
 
 	return err;
 }
@@ -950,9 +950,9 @@ int alx_write_phy_reg(struct alx_adapter *adpt, A_UINT16 reg, A_UINT16 phy_data)
 {
 	int err;
 
-	spin_lock(&adpt->mdio_lock);
+	OS_SPIN_LOCK(&adpt->mdio_lock);
 	err = __alx_write_phy_reg(adpt, reg, phy_data);
-	spin_unlock(&adpt->mdio_lock);
+	OS_SPIN_UNLOCK(&adpt->mdio_lock);
 
 	return err;
 }
@@ -961,9 +961,9 @@ int alx_read_phy_ext(struct alx_adapter *adpt, A_UINT8 dev, A_UINT16 reg, A_UINT
 {
 	int err;
 
-	spin_lock(&adpt->mdio_lock);
+	OS_SPIN_LOCK(&adpt->mdio_lock);
 	err = __alx_read_phy_ext(adpt, dev, reg, pdata);
-	spin_unlock(&adpt->mdio_lock);
+	OS_SPIN_UNLOCK(&adpt->mdio_lock);
 
 	return err;
 }
@@ -972,9 +972,9 @@ int alx_write_phy_ext(struct alx_adapter *adpt, A_UINT8 dev, A_UINT16 reg, A_UIN
 {
 	int err;
 
-	spin_lock(&adpt->mdio_lock);
+	OS_SPIN_LOCK(&adpt->mdio_lock);
 	err = __alx_write_phy_ext(adpt, dev, reg, data);
-	spin_unlock(&adpt->mdio_lock);
+	OS_SPIN_UNLOCK(&adpt->mdio_lock);
 
 	return err;
 }
@@ -983,9 +983,9 @@ int alx_read_phy_dbg(struct alx_adapter *adpt, A_UINT16 reg, A_UINT16 *pdata)
 {
 	int err;
 
-	spin_lock(&adpt->mdio_lock);
+	OS_SPIN_LOCK(&adpt->mdio_lock);
 	err = __alx_read_phy_dbg(adpt, reg, pdata);
-	spin_unlock(&adpt->mdio_lock);
+	OS_SPIN_UNLOCK(&adpt->mdio_lock);
 
 	return err;
 }
@@ -994,9 +994,9 @@ int alx_write_phy_dbg(struct alx_adapter *adpt, A_UINT16 reg, A_UINT16 data)
 {
 	int err;
 
-	spin_lock(&adpt->mdio_lock);
+	OS_SPIN_LOCK(&adpt->mdio_lock);
 	err = __alx_write_phy_dbg(adpt, reg, data);
-	spin_unlock(&adpt->mdio_lock);
+	OS_SPIN_UNLOCK(&adpt->mdio_lock);
 
 	return err;
 }

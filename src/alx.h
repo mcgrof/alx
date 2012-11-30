@@ -447,8 +447,8 @@ struct alx_hw_stats {
  */
 struct alx_ring_header {
 	void        *desc;      /* virt addr */
-	dma_addr_t   dma;       /* phy addr */
-	A_UINT32          size;      /* length in bytes */
+	A_DMA_ADDR  dma;       /* phy addr */
+	A_UINT32    size;      /* length in bytes */
 };
 
 /*
@@ -468,9 +468,9 @@ struct alx_rx_queue {
 	struct net_device *netdev;
 	struct device *dev;		/* device pointer for dma operation */
 	struct rrd_desc *rrd_hdr;	/* rrd ring virtual addr */
-	dma_addr_t rrd_dma;		/* rrd ring physical addr */
+	A_DMA_ADDR rrd_dma;		/* rrd ring physical addr */
 	struct rfd_desc *rfd_hdr;	/* rfd ring virtual addr */
-	dma_addr_t rfd_dma;		/* rfd ring physical addr */
+	A_DMA_ADDR rfd_dma;		/* rfd ring physical addr */
 	struct alx_buffer *bf_info;	/* info for rx-skbs */
 
 	A_UINT16 count;			/* number of ring elements */
@@ -491,11 +491,11 @@ struct alx_tx_queue {
 	struct net_device *netdev;
 	struct device *dev;		/* device pointer for dma operation */
 	struct tpd_desc *tpd_hdr;	/* tpd ring virtual addr */
-	dma_addr_t tpd_dma;		/* tpd ring physical addr */
+	A_DMA_ADDR tpd_dma;		/* tpd ring physical addr */
 	struct alx_buffer *bf_info;	/* info for tx-skbs pending on HW */
 	A_UINT16 count;			/* number of ring elements  */
 	A_UINT16 pidx;			/* producer index */
-	atomic_t cidx;			/* consumer index */
+	A_ATOMIC cidx;			/* consumer index */
 	A_UINT16 p_reg;			/* register saving producer index */
 	A_UINT16 c_reg;			/* register saving consumer index */
 	A_UINT16 qidx;			/* queue index */
@@ -585,7 +585,7 @@ struct alx_adapter {
 	A_UINT32			imask;		/* interrupt mask for ALX_IMR */
 	A_UINT32			smb_timer;	/* statistic counts refresh
 						 * timeout, million-seconds */
-	spinlock_t		smb_lock;	/* lock for updating stats */
+	A_SPINLOCK		smb_lock;	/* lock for updating stats */
 
 	HAL_BOOL			link_up;	/* link up flag */
 	A_UINT16			link_speed;	/* current link speed */
@@ -602,12 +602,12 @@ struct alx_adapter {
 						 * same order with hw
 						 */
 	A_UINT32			sleep_ctrl;	/* control used when sleep */
-	atomic_t		irq_sem;	/* interrupt sync */
+	A_ATOMIC		irq_sem;	/* interrupt sync */
 	A_UINT16			msg_enable;	/* msg level */
 
 	DECLARE_BITMAP(flags, ALX_FLAG_NUMBER_OF_FLAGS);
 
-	spinlock_t		mdio_lock;	/* used for MII bus access */
+	A_SPINLOCK		mdio_lock;	/* used for MII bus access */
 	struct mdio_if_info	mdio;
 	A_UINT16			phy_id[2];
 
