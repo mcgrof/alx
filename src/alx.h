@@ -629,36 +629,6 @@ struct alx_adapter {
 #define ALX_FLAG_CLEAR(_adpt, _FLAG) (\
 	clear_bit(ALX_FLAG_##_FLAG, (_adpt)->flags))
 
-
-/* write to 8bit register via pci memory space */
-#define ALX_MEM_W8(s, reg, val) (writeb((val), ((s)->hw_addr + reg)))
-
-/* read from 8bit register via pci memory space */
-#define ALX_MEM_R8(s, reg, pdat) (\
-		*(A_UINT8 *)(pdat) = readb((s)->hw_addr + reg))
-
-/* write to 16bit register via pci memory space */
-#define ALX_MEM_W16(s, reg, val) (writew((val), ((s)->hw_addr + reg)))
-
-/* read from 16bit register via pci memory space */
-#define ALX_MEM_R16(s, reg, pdat) (\
-		*(A_UINT16 *)(pdat) = readw((s)->hw_addr + reg))
-
-/* write to 32bit register via pci memory space */
-#define ALX_MEM_W32(s, reg, val) (writel((val), ((s)->hw_addr + reg)))
-
-/* read from 32bit register via pci memory space */
-#define ALX_MEM_R32(s, reg, pdat) (\
-		*(A_UINT32 *)(pdat) = readl((s)->hw_addr + reg))
-
-/* read from 16bit register via pci config space */
-#define ALX_CFG_R16(s, reg, pdat) (\
-	pci_read_config_word((s)->pdev, (reg), (pdat)))
-
-/* write to 16bit register via pci config space */
-#define ALX_CFG_W16(s, reg, val) (\
-	pci_write_config_word((s)->pdev, (reg), (val)))
-
 /* flush regs */
 #define ALX_MEM_FLUSH(s) (readl((s)->hw_addr))
 
