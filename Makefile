@@ -45,6 +45,7 @@ $(error "The path to this compat-drivers directory has spaces in it." \
 endif
 
 export CFLAGS += \
+	-DCOMPAT_BASE="\"$(shell cat $(PWD)/.compat_base)\"" \
         -DCOMPAT_BASE_TREE="\"$(shell cat $(PWD)/.compat_base_tree)\"" \
         -DCOMPAT_BASE_TREE_VERSION="\"$(shell cat $(PWD)/.compat_base_tree_version)\"" \
         -DCOMPAT_PROJECT="\"Compat-wireless\"" \
@@ -65,12 +66,20 @@ all: help
 help:
 	@echo Possible build options:
 	@echo
-	@echo make linux             - Builds alx for any Linux kernel 2.6.28 - 3.4
+	@echo make linux-src         - Transforms code for integration into linux-next
+	@echo make linux             - Builds alx for any Linux kernel 2.6.28 - 3.x
 
 $(COMPAT_CONFIG): ;
 
+# Convert unified driver code to Linux, always targeting linux-next
+linux-src:
+	@cp -a src target/linux/
+
+# Uses compat-drivers to provide backport functionality
+# to support the linux-next driver down to all supported
+# compat-drivers kernels.
 linux: $(CREL_CHECK)
-	@patch -p6 -d src/ < linux-next-pending/0002-backport-alx.patch
+	@patch -p6 -d target/linux/src/ < unified-drivers/network/0001-backport-alx.patch
 	$(MAKE) -C $(KLIB_BUILD) M=$(PWD) modules
 	@touch $@
 
@@ -101,17 +110,6 @@ install-scripts:
 	@# All the scripts we can use
 	@mkdir -p $(DESTDIR)/usr/lib/compat-drivers/
 	@install scripts/modlib.sh	$(DESTDIR)/usr/lib/compat-drivers/
-	@# This is to allow switching between drivers without blacklisting
-	@install scripts/alx-enable	$(DESTDIR)/usr/sbin/
-	@if [ $(shell modinfo atl1c > /dev/null 2>&1 && echo 1) ]; then \
-		echo ;\
-		echo -n "Note: atl1c detected, we're going to disable it. "  ;\
-		echo "If you would like to enable it later you can run:"  ;\
-		echo "    sudo alx-load atl1c"  ;\
-		echo ;\
-		echo Running alx-enable alx...;\
-		$(DESTDIR)/usr/sbin/alx-enable alx;\
-	fi
 	@# If on distributions like Mandriva which like to
 	@# compress their modules this will find out and do
 	@# it for you. Reason is some old version of modutils
@@ -137,7 +135,7 @@ install-scripts:
 uninstall:
 	@# New location, matches upstream
 	@rm -rf $(KLIB)/$(KMODDIR)/compat/
-	@rm -rf $(KLIB)/$(KMODDIR)/drivers/net/alx.ko*
+	@rm -rf $(KLIB)/$(KMODDIR)/drivers/net/ethernet/atheros/alx/alx.ko*
 	@# Lets only remove the stuff we are sure we are providing
 	@# on the misc directory.
 	@/sbin/depmod -a
@@ -146,12 +144,11 @@ uninstall:
 clean:
 	$(MAKE) -C $(KLIB_BUILD) M=$(PWD) clean
 	@rm -f $(CREL_PRE)*
+	@rm -rf target/linux/src/
 unload:
 	@./scripts/unload.sh
 
-
-
-.PHONY: all clean install uninstall unload modules Makefile linux
+.PHONY: all clean install uninstall unload modules Makefile linux linux-src
 
 endif
 

@@ -1,8 +1,4 @@
 #!/bin/bash
 
-# This can be redefined, the default is:
 COMPAT_SRC="$HOME/devel/compat-drivers/"
-
-EXTRA_COPY=""
-EXTRA_COPY="$EXTRA_COPY scripts/alx-enable"
-EXTRA_COPY="$EXTRA_COPY linux-next-pending/0002-backport-alx.patch"
+EXTRA_COPY="patches/unified-drivers/network/0001-backport-alx.patch"
