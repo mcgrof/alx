@@ -16,6 +16,7 @@ is provided by utilizing the compat-drivers framework.
 To build for linux you will need a few trees. We have scripts to let
 you get all that you need:
 
+<pre>
 cd ~
 git clone git://github.com/mcgrof/compat.git
 cd compat
@@ -27,6 +28,7 @@ git clone git://github.com/mcgrof/alx.git
 
 cd alx
 ./make linux
+</pre>
 
 # Contributions
 
