@@ -70,7 +70,6 @@ $(COMPAT_CONFIG): ;
 # compat-drivers kernels.
 linux: $(CREL_CHECK)
 	$(MAKE) -C $(KLIB_BUILD) M=$(PWD) modules
-	@touch $@
 
 # We use a CREL_CHECK variable which will depend on the environment used to
 # build. If the environment requirements change it forces a reconfiguration

@@ -5,7 +5,9 @@ all: help
 linux-help:
 	@echo "    make linux-src              - Transforms code for integration into linux-next"
 	@echo "    make linux                  - Builds alx for any Linux kernel 2.6.28 - 3.x"
-	@echo "    make linux-install          - Install linux target"
+	@echo "    make install-linux          - Install linux target"
+	@echo "    make uninstall-linux        - Install linux target"
+	@echo "    make clean-linux            - Install linux target"
 
 # Convert unified driver code to Linux, always targeting linux-next
 linux-src:
@@ -24,6 +26,9 @@ linux: linux-backport
 
 install-linux:
 	$(MAKE) -C $(TARGET_LINUX) install-modules
+
+clean-linux:
+	$(MAKE) -C $(TARGET_LINUX) clean
 
 uninstall-linux:
 	$(MAKE) -C $(TARGET_LINUX) uninstall
