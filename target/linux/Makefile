@@ -69,7 +69,6 @@ $(COMPAT_CONFIG): ;
 # to support the linux-next driver down to all supported
 # compat-drivers kernels.
 linux: $(CREL_CHECK)
-	@-patch -N -p6 -d src/ < patches/unified-drivers/network/0001-backport-alx.patch
 	$(MAKE) -C $(KLIB_BUILD) M=$(PWD) modules
 	@touch $@
 

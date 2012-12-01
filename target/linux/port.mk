@@ -11,11 +11,15 @@ linux-help:
 linux-src:
 	@cp -a src $(TARGET_LINUX)
 
+linux-backport:
+	@-cd $(TARGET_LINUX) ; \
+	  ./refresh-compat ; \
+	  patch -N -p6 -d src/ < patches/unified-drivers/network/0001-backport-alx.patch
+
 # Uses compat-drivers to provide backport functionality
 # to support the linux-next driver down to all supported
 # compat-drivers kernels.
-linux:
-	$(TARGET_LINUX)/refresh-compat
+linux: linux-backport
 	make -C $(TARGET_LINUX)
 
 install-linux:
@@ -24,4 +28,4 @@ install-linux:
 uninstall-linux:
 	$(MAKE) -C $(TARGET_LINUX) uninstall
 
-.PHONY: linux-help linux-src linux install-linux uninstall-linux
+.PHONY: linux-help linux-src linux-backport linux install-linux uninstall-linux
