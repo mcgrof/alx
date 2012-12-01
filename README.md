@@ -19,6 +19,31 @@ To synch to the latest compat-drivers clone compat-drivers and run:
 
 This will copy over all code needed to build the driver for Linux.
 
+# Contributions
+
+Contributions to compat follow the same mechanisms as used in the Linux kernel,
+this means you should provide as Singed-off-by tag as documented on the
+Developer's Certificate of Origin 1.1.
+
+# Submitting patches
+
+compat and compat-drivers contributions follow the contribution model
+implemented by the Linux kernel. Patches or pull requests for compat and
+compat-drivers must have be signed-offed. If you don't sign off on them they
+will not accepted. This means adding a line that says "Signed-off-by: Name
+email" at the end of each commit, indicating that you wrote the code and have
+the right to pass it on as an open source patch. For exact definition of what
+the Signed-off-by tag is you can read the definition of the "Developer's
+Certificate of Origin 1.1", which you can read here:
+
+http://gerrit.googlecode.com/svn/documentation/2.0/user-signedoffby.html
+
+You can send patches as follows:
+
+  * To: mcgrof@kernel.org, adrian@freebsd.org
+  * Cc: nic-devel@qualcomm.com
+  * Subject: alx: foo
+
 # BSD support
 
 TBD
