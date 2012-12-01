@@ -16,6 +16,8 @@ target/linux/.config.mk_md5sum.txt
 
 target/linux/.compat_autoconf*
 
+*.tmp_versions/
+
 target/linux/src
 target/linux/patches/
 
