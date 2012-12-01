@@ -13,11 +13,20 @@ Linux support targets the alx driver to be built in synch with
 linux-next.git as the base development tree. Backport kernel support
 is provided by utilizing the compat-drivers framework.
 
-To synch to the latest compat-drivers clone compat-drivers and run:
+To build for linux you will need a few trees. We have scripts to let
+you get all that you need:
 
-./refresh-compat
+cd ~
+git clone git://github.com/mcgrof/compat.git
+cd compat
+./bin/get-compat-trees
 
-This will copy over all code needed to build the driver for Linux.
+cd ~
+mkdir unified/
+git clone git://github.com/mcgrof/alx.git
+
+cd alx
+./make linux
 
 # Contributions
 
