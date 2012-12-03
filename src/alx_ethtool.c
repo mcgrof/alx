@@ -15,14 +15,20 @@
  */
 
 #include <linux/pci.h>
+#include <linux/netdevice.h>
+#include <linux/etherdevice.h>
 #include <linux/ethtool.h>
+#include <linux/mdio.h>
 
+#include "alx_reg.h"
+#include "alx_hw.h"
 #include "alx.h"
 
 static int alx_get_settings(struct net_device *netdev,
 			    struct ethtool_cmd *ecmd)
 {
 	struct alx_adapter *adpt = netdev_priv(netdev);
+	struct alx_hw *hw = &adpt->hw;
 
 	ecmd->supported = (SUPPORTED_10baseT_Half  |
 			   SUPPORTED_10baseT_Full  |
@@ -30,22 +36,22 @@ static int alx_get_settings(struct net_device *netdev,
 			   SUPPORTED_100baseT_Full |
 			   SUPPORTED_Autoneg       |
 			   SUPPORTED_TP);
-	if (ALX_FLAG(adpt, CAP_GIGA))
+	if (ALX_CAP(hw, GIGA))
 		ecmd->supported |= SUPPORTED_1000baseT_Full;
 
 	ecmd->advertising = ADVERTISED_TP;
-	if (adpt->adv_cfg & ADVERTISED_Autoneg)
-		ecmd->advertising |= adpt->adv_cfg;
+	if (hw->adv_cfg & ADVERTISED_Autoneg)
+		ecmd->advertising |= hw->adv_cfg;
 
 	ecmd->port = PORT_TP;
 	ecmd->phy_address = 0;
-	ecmd->autoneg = (adpt->adv_cfg & ADVERTISED_Autoneg) ?
+	ecmd->autoneg = (hw->adv_cfg & ADVERTISED_Autoneg) ?
 		AUTONEG_ENABLE : AUTONEG_DISABLE;
 	ecmd->transceiver = XCVR_INTERNAL;
 
-	if (adpt->link_up) {
-		ethtool_cmd_speed_set(ecmd, adpt->link_speed);
-		ecmd->duplex = adpt->link_duplex;
+	if (hw->link_up) {
+		ethtool_cmd_speed_set(ecmd, hw->link_speed);
+		ecmd->duplex = hw->link_duplex;
 	} else {
 		ethtool_cmd_speed_set(ecmd, -1);
 		ecmd->duplex = -1;
@@ -58,10 +64,11 @@ static int alx_set_settings(struct net_device *netdev,
 			    struct ethtool_cmd *ecmd)
 {
 	struct alx_adapter *adpt = netdev_priv(netdev);
+	struct alx_hw *hw = &adpt->hw;
 	u32 adv_cfg;
 	int err = 0;
 
-	while (test_and_set_bit(ALX_FLAG_RESETING, adpt->flags))
+	while (test_and_set_bit(ALX_FLAG_RESETING, &adpt->flags))
 		msleep(20);
 
 	if (ecmd->autoneg == AUTONEG_ENABLE) {
@@ -71,7 +78,7 @@ static int alx_set_settings(struct net_device *netdev,
 			return -EINVAL;
 		}
 		adv_cfg = ecmd->advertising | ADVERTISED_Autoneg;
-	} else { /* force mode */
+	} else {
 		int speed = ethtool_cmd_speed(ecmd);
 
 		switch (speed + ecmd->duplex) {
@@ -94,8 +101,8 @@ static int alx_set_settings(struct net_device *netdev,
 	}
 
 	if (!err) {
-		adpt->adv_cfg = adv_cfg;
-		err = alx_setup_speed_duplex(adpt, adv_cfg, adpt->flowctrl);
+		hw->adv_cfg = adv_cfg;
+		err = alx_setup_speed_duplex(hw, adv_cfg, hw->flowctrl);
 		if (err) {
 			dev_warn(&adpt->pdev->dev,
 				 "config PHY speed/duplex failed,err=%d\n",
@@ -113,19 +120,20 @@ static void alx_get_pauseparam(struct net_device *netdev,
 			       struct ethtool_pauseparam *pause)
 {
 	struct alx_adapter *adpt = netdev_priv(netdev);
+	struct alx_hw *hw = &adpt->hw;
 
-	if (adpt->flowctrl & ALX_FC_ANEG &&
-	    adpt->adv_cfg & ADVERTISED_Autoneg)
+	if (hw->flowctrl & ALX_FC_ANEG &&
+	    hw->adv_cfg & ADVERTISED_Autoneg)
 		pause->autoneg = AUTONEG_ENABLE;
 	else
 		pause->autoneg = AUTONEG_DISABLE;
 
-	if (adpt->flowctrl & ALX_FC_TX)
+	if (hw->flowctrl & ALX_FC_TX)
 		pause->tx_pause = 1;
 	else
 		pause->tx_pause = 0;
 
-	if (adpt->flowctrl & ALX_FC_RX)
+	if (hw->flowctrl & ALX_FC_RX)
 		pause->rx_pause = 1;
 	else
 		pause->rx_pause = 0;
@@ -136,6 +144,7 @@ static int alx_set_pauseparam(struct net_device *netdev,
 			      struct ethtool_pauseparam *pause)
 {
 	struct alx_adapter *adpt = netdev_priv(netdev);
+	struct alx_hw *hw = &adpt->hw;
 	int err = 0;
 	bool reconfig_phy = false;
 	u8 fc = 0;
@@ -147,20 +156,20 @@ static int alx_set_pauseparam(struct net_device *netdev,
 	if (pause->autoneg)
 		fc |= ALX_FC_ANEG;
 
-	while (test_and_set_bit(ALX_FLAG_RESETING, adpt->flags))
+	while (test_and_set_bit(ALX_FLAG_RESETING, &adpt->flags))
 		msleep(20);
 
 	/* restart auto-neg for auto-mode */
-	if (adpt->adv_cfg & ADVERTISED_Autoneg) {
-		if (!((fc ^ adpt->flowctrl) & ALX_FC_ANEG))
-			reconfig_phy = true; /* auto/force change */
-		if (fc & adpt->flowctrl & ALX_FC_ANEG &&
-		    (fc ^ adpt->flowctrl) & (ALX_FC_RX | ALX_FC_TX))
+	if (hw->adv_cfg & ADVERTISED_Autoneg) {
+		if (!((fc ^ hw->flowctrl) & ALX_FC_ANEG))
+			reconfig_phy = true;
+		if (fc & hw->flowctrl & ALX_FC_ANEG &&
+		    (fc ^ hw->flowctrl) & (ALX_FC_RX | ALX_FC_TX))
 			reconfig_phy = true;
 	}
 
 	if (reconfig_phy) {
-		err = alx_setup_speed_duplex(adpt, adpt->adv_cfg, fc);
+		err = alx_setup_speed_duplex(hw, hw->adv_cfg, fc);
 		if (err) {
 			dev_warn(&adpt->pdev->dev,
 				 "config PHY flow control failed,err=%d\n",
@@ -170,10 +179,10 @@ static int alx_set_pauseparam(struct net_device *netdev,
 	}
 
 	/* flow control on mac */
-	if ((fc ^ adpt->flowctrl) & (ALX_FC_RX | ALX_FC_TX))
-		alx_cfg_mac_fc(adpt, fc);
+	if ((fc ^ hw->flowctrl) & (ALX_FC_RX | ALX_FC_TX))
+		alx_cfg_mac_fc(hw, fc);
 
-	adpt->flowctrl = fc;
+	hw->flowctrl = fc;
 
 	ALX_FLAG_CLEAR(adpt, RESETING);
 
@@ -237,18 +246,19 @@ static void alx_get_regs(struct net_device *netdev,
 			 struct ethtool_regs *regs, void *buff)
 {
 	struct alx_adapter *adpt = netdev_priv(netdev);
+	struct alx_hw *hw = &adpt->hw;
 	u32 *p = buff;
 	int i;
 
-	regs->version = (ALX_DID(adpt) << 16) | (ALX_REVID(adpt) << 8) | 1;
+	regs->version = (ALX_DID(hw) << 16) | (ALX_REVID(hw) << 8) | 1;
 
 	memset(buff, 0, (ARRAY_SIZE(hw_regs) + 1) * 4);
 
 	for (i = 0; i < ARRAY_SIZE(hw_regs); i++, p++)
-		ALX_MEM_R32(adpt, hw_regs[i], p);
+		ALX_MEM_R32(hw, hw_regs[i], p);
 
 	/* last one for PHY Link Status */
-	alx_read_phy_reg(adpt, MII_BMSR, (u16 *)p);
+	alx_read_phy_reg(hw, MII_BMSR, (u16 *)p);
 }
 
 static void alx_get_drvinfo(struct net_device *netdev,
@@ -270,34 +280,38 @@ static void alx_get_wol(struct net_device *netdev,
 			struct ethtool_wolinfo *wol)
 {
 	struct alx_adapter *adpt = netdev_priv(netdev);
+	struct alx_hw *hw = &adpt->hw;
 
 	wol->supported = WAKE_MAGIC | WAKE_PHY;
 	wol->wolopts = 0;
 
-	if (adpt->sleep_ctrl & ALX_SLEEP_WOL_MAGIC)
+	if (hw->sleep_ctrl & ALX_SLEEP_WOL_MAGIC)
 		wol->wolopts |= WAKE_MAGIC;
-	if (adpt->sleep_ctrl & ALX_SLEEP_WOL_PHY)
+	if (hw->sleep_ctrl & ALX_SLEEP_WOL_PHY)
 		wol->wolopts |= WAKE_PHY;
 
-	netdev_info(adpt->netdev, "wolopts = %x\n", wol->wolopts);
+	netif_info(adpt, wol, adpt->netdev,
+		   "wolopts = %x\n",
+		   wol->wolopts);
 }
 
 static int alx_set_wol(struct net_device *netdev, struct ethtool_wolinfo *wol)
 {
 	struct alx_adapter *adpt = netdev_priv(netdev);
+	struct alx_hw *hw = &adpt->hw;
 
 	if (wol->wolopts & (WAKE_ARP | WAKE_MAGICSECURE |
 			    WAKE_UCAST | WAKE_BCAST | WAKE_MCAST))
 		return -EOPNOTSUPP;
 
-	adpt->sleep_ctrl = 0;
+	hw->sleep_ctrl = 0;
 
 	if (wol->wolopts & WAKE_MAGIC)
-		adpt->sleep_ctrl |= ALX_SLEEP_WOL_MAGIC;
+		hw->sleep_ctrl |= ALX_SLEEP_WOL_MAGIC;
 	if (wol->wolopts & WAKE_PHY)
-		adpt->sleep_ctrl |= ALX_SLEEP_WOL_PHY;
+		hw->sleep_ctrl |= ALX_SLEEP_WOL_PHY;
 
-	device_set_wakeup_enable(&adpt->pdev->dev, adpt->sleep_ctrl);
+	device_set_wakeup_enable(&adpt->pdev->dev, hw->sleep_ctrl);
 
 	return 0;
 }
