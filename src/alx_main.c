@@ -31,7 +31,15 @@
 #include "alx_hw.h"
 #include "alx.h"
 
+#define DRV_MAJ		1
+#define DRV_MIN		2
+#define DRV_PATCH	1
+#define DRV_MODULE_VER	\
+	__stringify(DRV_MAJ) "." __stringify(DRV_MIN) "." \
+	__stringify(DRV_PATCH)
+
 char alx_drv_name[] = "alx";
+char alx_drv_version[] = DRV_MODULE_VER;
 static const char alx_drv_desc[] =
 "Qualcomm Atheros(R) AR816x/AR817x PCI-E Ethernet Network Driver";
 
@@ -57,7 +65,7 @@ MODULE_DEVICE_TABLE(pci, alx_pci_tbl);
 MODULE_AUTHOR("Qualcomm Corporation, <nic-devel@qualcomm.com>");
 MODULE_DESCRIPTION("Qualcomm Atheros Gigabit Ethernet Driver");
 MODULE_LICENSE("Dual BSD/GPL");
-
+MODULE_VERSION(DRV_MODULE_VER);
 
 static int alx_poll(struct napi_struct *napi, int budget);
 static irqreturn_t alx_msix_ring(int irq, void *data);
@@ -927,8 +935,6 @@ static int alx_request_irq(struct alx_adapter *adpt)
 		adpt->nr_vec = 1;
 		adpt->nr_hwrxq = 1;
 		alx_configure_rss(hw, false);
-		netif_set_real_num_tx_queues(adpt->netdev, adpt->nr_txq);
-		netif_set_real_num_rx_queues(adpt->netdev, adpt->nr_rxq);
 		if (!pci_enable_msi(pdev))
 			ALX_FLAG_SET(adpt, USING_MSI);
 
@@ -960,12 +966,14 @@ static int alx_request_irq(struct alx_adapter *adpt)
 out:
 	if (likely(!err)) {
 		alx_config_vector_mapping(adpt);
-		netif_info(adpt, intr, adpt->netdev,
+
+		netif_info(adpt, drv, adpt->netdev,
 			   "nr_rxq=%d, nr_txq=%d, nr_napi=%d, nr_vec=%d\n",
 			   adpt->nr_rxq, adpt->nr_txq,
 			   adpt->nr_napi, adpt->nr_vec);
-		netif_info(adpt, intr, adpt->netdev,
-			   "Interrupt Mode: %s\n",
+		netif_info(adpt, drv, adpt->netdev,
+			   "flags=%lX, Interrupt Mode: %s\n",
+			   adpt->flags,
 			   ALX_FLAG(adpt, USING_MSIX) ? "MSIX" :
 			   ALX_FLAG(adpt, USING_MSI) ? "MSI" : "INTx");
 	} else
@@ -1175,7 +1183,7 @@ static int alx_change_mtu(struct net_device *netdev, int new_mtu)
 		return -EINVAL;
 	}
 	/* set MTU */
-	if (old_mtu != new_mtu && netif_running(netdev)) {
+	if (old_mtu != new_mtu) {
 		netif_info(adpt, drv, adpt->netdev,
 			   "changing MTU from %d to %d\n",
 			   netdev->mtu, new_mtu);
@@ -1184,7 +1192,8 @@ static int alx_change_mtu(struct net_device *netdev, int new_mtu)
 		adpt->rxbuf_size = new_mtu > ALX_DEF_RXBUF_SIZE ?
 				   ALIGN(max_frame, 8) : ALX_DEF_RXBUF_SIZE;
 		netdev_update_features(netdev);
-		alx_reinit(adpt);
+		if (netif_running(netdev))
+			alx_reinit(adpt);
 	}
 
 	return 0;
@@ -1209,10 +1218,12 @@ static void alx_netif_stop(struct alx_adapter *adpt)
 	int i;
 
 	adpt->netdev->trans_start = jiffies;
-	netif_carrier_off(adpt->netdev);
-	netif_tx_disable(adpt->netdev);
-	for (i = 0; i < adpt->nr_napi; i++)
-		napi_disable(&adpt->qnapi[i]->napi);
+	if (netif_carrier_ok(adpt->netdev)) {
+		netif_carrier_off(adpt->netdev);
+		netif_tx_disable(adpt->netdev);
+		for (i = 0; i < adpt->nr_napi; i++)
+			napi_disable(&adpt->qnapi[i]->napi);
+	}
 }
 
 static void alx_netif_start(struct alx_adapter *adpt)
@@ -1223,84 +1234,6 @@ static void alx_netif_start(struct alx_adapter *adpt)
 	for (i = 0; i < adpt->nr_napi; i++)
 		napi_enable(&adpt->qnapi[i]->napi);
 	netif_carrier_on(adpt->netdev);
-}
-
-static int __alx_open(struct alx_adapter *adpt)
-{
-	int err;
-
-	netif_carrier_off(adpt->netdev);
-
-	/* allocate all memory resources */
-	err = alx_setup_all_ring_resources(adpt);
-	if (err)
-		goto err_out;
-
-	/* make hardware ready before allocate interrupt */
-	alx_configure(adpt);
-
-	err = alx_request_irq(adpt);
-	if (err)
-		goto err_out;
-
-	ALX_FLAG_CLEAR(adpt, HALT);
-
-	/* clear old interrupts */
-	ALX_MEM_W32(&adpt->hw, ALX_ISR, (u32)~ALX_ISR_DIS);
-
-	alx_irq_enable(adpt);
-
-	netif_tx_start_all_queues(adpt->netdev);
-
-	ALX_FLAG_SET(adpt, TASK_CHK_LINK);
-	alx_schedule_work(adpt);
-	return 0;
-
-err_out:
-
-	alx_free_all_ring_resources(adpt);
-	alx_disable_advanced_intr(adpt);
-	return err;
-}
-
-static void alx_halt(struct alx_adapter *adpt)
-{
-	struct alx_hw *hw = &adpt->hw;
-
-	ALX_FLAG_SET(adpt, HALT);
-	alx_cancel_work(adpt);
-
-	alx_netif_stop(adpt);
-	alx_reset_mac(hw);
-	/* disable l0s/l1 */
-	alx_enable_aspm(hw, false, false);
-	alx_irq_disable(adpt);
-	alx_free_all_rings_buf(adpt);
-}
-
-static void alx_activate(struct alx_adapter *adpt)
-{
-	/* hardware setting lost, restore it */
-	alx_reinit_rings(adpt);
-	alx_configure(adpt);
-
-	ALX_FLAG_CLEAR(adpt, HALT);
-	/* clear old interrupts */
-	ALX_MEM_W32(&adpt->hw, ALX_ISR, (u32)~ALX_ISR_DIS);
-
-	alx_irq_enable(adpt);
-
-	ALX_FLAG_SET(adpt, TASK_CHK_LINK);
-	alx_schedule_work(adpt);
-}
-
-static void __alx_stop(struct alx_adapter *adpt)
-{
-	alx_halt(adpt);
-
-	alx_free_irq(adpt);
-
-	alx_free_all_ring_resources(adpt);
 }
 
 static bool alx_enable_msix(struct alx_adapter *adpt)
@@ -1367,10 +1300,104 @@ static void alx_init_intr(struct alx_adapter *adpt)
 		if (!pci_enable_msi(adpt->pdev))
 			ALX_FLAG_SET(adpt, USING_MSI);
 	}
+}
 
+static int __alx_open(struct alx_adapter *adpt, bool resume)
+{
+	int err;
+
+	/* decide interrupt mode, some resources allocation depend on it */
+	alx_init_intr(adpt);
+
+	/* init rss indirection table */
+	alx_init_def_rss_idt(adpt);
+
+	if (!resume)
+		netif_carrier_off(adpt->netdev);
+
+	/* allocate all memory resources */
+	err = alx_setup_all_ring_resources(adpt);
+	if (err)
+		goto err_out;
+
+	/* make hardware ready before allocate interrupt */
+	alx_configure(adpt);
+
+	err = alx_request_irq(adpt);
+	if (err)
+		goto err_out;
+
+	/* netif_set_real_num_tx/rx_queues need rtnl_lock held */
+	if (resume)
+		rtnl_lock();
 	netif_set_real_num_tx_queues(adpt->netdev, adpt->nr_txq);
 	netif_set_real_num_rx_queues(adpt->netdev, adpt->nr_rxq);
+	if (resume)
+		rtnl_unlock();
 
+	ALX_FLAG_CLEAR(adpt, HALT);
+
+	/* clear old interrupts */
+	ALX_MEM_W32(&adpt->hw, ALX_ISR, (u32)~ALX_ISR_DIS);
+
+	alx_irq_enable(adpt);
+
+	if (!resume)
+		netif_tx_start_all_queues(adpt->netdev);
+
+	ALX_FLAG_SET(adpt, TASK_CHK_LINK);
+	alx_schedule_work(adpt);
+	return 0;
+
+err_out:
+
+	alx_free_all_ring_resources(adpt);
+	alx_disable_advanced_intr(adpt);
+	return err;
+}
+
+static void alx_halt(struct alx_adapter *adpt)
+{
+	struct alx_hw *hw = &adpt->hw;
+
+	ALX_FLAG_SET(adpt, HALT);
+	alx_cancel_work(adpt);
+
+	alx_netif_stop(adpt);
+	hw->link_up = false;
+	hw->link_speed = SPEED_0;
+
+	alx_reset_mac(hw);
+
+	/* disable l0s/l1 */
+	alx_enable_aspm(hw, false, false);
+	alx_irq_disable(adpt);
+	alx_free_all_rings_buf(adpt);
+}
+
+static void alx_activate(struct alx_adapter *adpt)
+{
+	/* hardware setting lost, restore it */
+	alx_reinit_rings(adpt);
+	alx_configure(adpt);
+
+	ALX_FLAG_CLEAR(adpt, HALT);
+	/* clear old interrupts */
+	ALX_MEM_W32(&adpt->hw, ALX_ISR, (u32)~ALX_ISR_DIS);
+
+	alx_irq_enable(adpt);
+
+	ALX_FLAG_SET(adpt, TASK_CHK_LINK);
+	alx_schedule_work(adpt);
+}
+
+static void __alx_stop(struct alx_adapter *adpt)
+{
+	alx_halt(adpt);
+
+	alx_free_irq(adpt);
+
+	alx_free_all_ring_resources(adpt);
 }
 
 static void alx_init_ring_ptrs(struct alx_adapter *adpt)
@@ -1423,22 +1450,9 @@ static void alx_init_ring_ptrs(struct alx_adapter *adpt)
 
 static void alx_show_speed(struct alx_adapter *adpt, u16 speed)
 {
-	char *desc;
-
-	desc = speed == SPEED_1000 + FULL_DUPLEX ?
-		"1 Gbps Duplex Full" :
-		speed == SPEED_100 + FULL_DUPLEX ?
-		"100 Mbps Duplex Full" :
-		speed == SPEED_100 + HALF_DUPLEX ?
-		"100 Mbps Duplex Half" :
-		speed == SPEED_10 + FULL_DUPLEX ?
-		"10 Mbps Duplex Full" :
-		speed == SPEED_10 + HALF_DUPLEX ?
-		"10 Mbps Duplex Half" :
-		"Unknown speed";
 	netif_info(adpt, link, adpt->netdev,
 		   "NIC Link Up: %s\n",
-		   desc);
+		   speed_desc(speed));
 }
 
 static int alx_reinit_rings(struct alx_adapter *adpt)
@@ -1561,13 +1575,7 @@ static int alx_open(struct net_device *netdev)
 	if (ALX_FLAG(adpt, TESTING))
 		return -EBUSY;
 
-	/* decide interrupt mode, some resources allocation depend on it */
-	alx_init_intr(adpt);
-
-	/* init rss indirection table */
-	alx_init_def_rss_idt(adpt);
-
-	err = __alx_open(adpt);
+	err = __alx_open(adpt, false);
 
 	return err;
 }
@@ -1578,8 +1586,6 @@ static int alx_stop(struct net_device *netdev)
 	struct alx_adapter *adpt = netdev_priv(netdev);
 
 	WARN_ON(ALX_FLAG(adpt, RESETING));
-
-	netif_info(adpt, ifdown, adpt->netdev, "alx_stop\n");
 
 	__alx_stop(adpt);
 
@@ -1608,14 +1614,18 @@ static int __alx_shutdown(struct pci_dev *pdev, bool *wol_en)
 	if (!err)
 		err = alx_clear_phy_intr(hw);
 	if (!err)
-		err = alx_config_wol(hw);
-	if (!err)
 		err = alx_pre_suspend(hw, speed);
+	if (!err)
+		err = alx_config_wol(hw);
 	if (err)
 		goto out;
 
 	*wol_en = false;
 	if (hw->sleep_ctrl & ALX_SLEEP_ACTIVE) {
+		netif_info(adpt, wol, netdev,
+			   "wol: ctrl=%X, speed=%X\n",
+			   hw->sleep_ctrl, speed);
+
 		device_set_wakeup_enable(&pdev->dev, true);
 		*wol_en = true;
 	}
@@ -1646,7 +1656,6 @@ static void alx_shutdown(struct pci_dev *pdev)
 		dev_err(&pdev->dev, "shutdown fail %d\n", err);
 	}
 }
-
 
 #ifdef CONFIG_PM_SLEEP
 static int alx_suspend(struct device *dev)
@@ -1692,6 +1701,7 @@ static int alx_resume(struct device *dev)
 
 	hw->link_up = false;
 	hw->link_speed = SPEED_0;
+	hw->imask = ALX_ISR_MISC;
 
 	alx_reset_pcie(hw);
 	alx_reset_phy(hw, !hw->hib_patch);
@@ -1711,7 +1721,7 @@ static int alx_resume(struct device *dev)
 	}
 
 	if (netif_running(netdev)) {
-		err = __alx_open(adpt);
+		err = __alx_open(adpt, true);
 		if (err)
 			return err;
 	}
@@ -2312,8 +2322,8 @@ static void alx_dump_state(struct alx_adapter *adpt)
 	for (i = 0; i < adpt->nr_txq; i++) {
 
 		txq = adpt->qnapi[i]->txq;
-		begin = txq->pidx >=  16 ? (txq->pidx - 16) :
-				(txq->count + txq->pidx - 16);
+		begin = txq->pidx >=  8 ? (txq->pidx - 8) :
+				(txq->count + txq->pidx - 8);
 		end = txq->pidx + 4;
 		if (end >= txq->count)
 			end -= txq->count;
@@ -2335,8 +2345,8 @@ static void alx_dump_state(struct alx_adapter *adpt)
 
 	netif_err(adpt, tx_err, adpt->netdev,
 		  "---------------dump registers-----------------\n");
-	end = 0x2000;
-	for (begin = 0; begin < end; begin += 16) {
+	end = 0x1800;
+	for (begin = 0x1400; begin < end; begin += 16) {
 		u32 v1, v2, v3, v4;
 
 		ALX_MEM_R32(hw, begin, &v1);
@@ -2570,6 +2580,8 @@ alx_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	/* reset PHY to a known stable status */
 	if (!phy_cfged)
 		alx_reset_phy(hw, !hw->hib_patch);
+	else
+		dev_info(&pdev->dev, "PHY has been configured.\n");
 
 	/* reset mac/dma controller */
 	err = alx_reset_mac(hw);
@@ -2698,6 +2710,8 @@ static pci_ers_result_t alx_pci_error_detected(struct pci_dev *pdev,
 	struct net_device *netdev = adpt->netdev;
 	pci_ers_result_t rc = PCI_ERS_RESULT_NEED_RESET;
 
+	dev_info(&pdev->dev, "pci error detectd\n");
+
 	rtnl_lock();
 
 	if (netif_running(netdev)) {
@@ -2720,6 +2734,8 @@ static pci_ers_result_t alx_pci_error_slot_reset(struct pci_dev *pdev)
 	struct alx_adapter *adpt = pci_get_drvdata(pdev);
 	struct alx_hw *hw = &adpt->hw;
 	pci_ers_result_t rc = PCI_ERS_RESULT_DISCONNECT;
+
+	dev_info(&pdev->dev, "pci error slot reset\n");
 
 	rtnl_lock();
 
@@ -2748,6 +2764,8 @@ static void alx_pci_error_resume(struct pci_dev *pdev)
 {
 	struct alx_adapter *adpt = pci_get_drvdata(pdev);
 	struct net_device *netdev = adpt->netdev;
+
+	dev_info(&pdev->dev, "pci error resume\n");
 
 	rtnl_lock();
 
