@@ -382,6 +382,19 @@ struct alx_hw_stats {
 (_speed) == SPEED_10 + HALF_DUPLEX ? ADVERTISED_10baseT_Half :		\
 0)
 
+#define speed_desc(_s) (\
+	(_s) == SPEED_1000 + FULL_DUPLEX ? \
+	"1 Gbps Full" : \
+	(_s) == SPEED_100 + FULL_DUPLEX ? \
+	"100 Mbps Full" : \
+	(_s) == SPEED_100 + HALF_DUPLEX ? \
+	"100 Mbps Half" : \
+	(_s) == SPEED_10 + FULL_DUPLEX ? \
+	"10 Mbps Full" : \
+	(_s) == SPEED_10 + HALF_DUPLEX ? \
+	"10 Mbps Half" : \
+	"Unknown speed")
+
 /* for FlowControl */
 #define ALX_FC_RX		0x01
 #define ALX_FC_TX		0x02
