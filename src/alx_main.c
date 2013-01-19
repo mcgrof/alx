@@ -1082,7 +1082,7 @@ static int __devinit alx_init_sw(struct alx_adapter *adpt)
 	alx_patch_assign(hw);
 
 	memcpy(hw->rss_key, def_rss_key, sizeof(def_rss_key));
-	hw->rss_idt_size = 0x100;
+	hw->rss_idt_size = 128;
 	hw->rss_hash_type = ALX_RSS_HASH_TYPE_ALL;
 	hw->smb_timer = 400;
 	hw->mtu = adpt->netdev->mtu;
