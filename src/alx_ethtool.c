@@ -15,11 +15,14 @@
  */
 
 #include <linux/pci.h>
+#include <linux/ip.h>
+#include <linux/tcp.h>
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
 #include <linux/ethtool.h>
 #include <linux/mdio.h>
 #include <linux/interrupt.h>
+#include <asm/byteorder.h>
 
 #include "alx_reg.h"
 #include "alx_hw.h"
@@ -307,7 +310,6 @@ static int alx_set_wol(struct net_device *netdev, struct ethtool_wolinfo *wol)
 
 	return 0;
 }
-
 
 static int alx_nway_reset(struct net_device *netdev)
 {
@@ -1106,9 +1108,453 @@ out:
 	return err;
 }
 
+static int alx_diag_pkt_len[] = {36, 512, 2048};
+static u8 alx_tso_pkt_hdr[] = {
+0x08, 0x00,
+0x45, 0x00, 0x00, 0x00,
+0x00, 0x00, 0x40, 0x00,
+0x40, 0x06, 0x00, 0x00,
+0xc0, 0xa8, 0x64, 0x0A,
+0xc0, 0xa8, 0x64, 0x0B,
+0x0d, 0x00, 0xe0, 0x00,
+0x00, 0x00, 0x01, 0x00,
+0x00, 0x00, 0x02, 0x00,
+0x80, 0x10, 0x10, 0x00,
+0x14, 0x09, 0x00, 0x00,
+0x08, 0x0a, 0x11, 0x22,
+0x33, 0x44, 0x55, 0x66,
+0x77, 0x88, 0x01, 0x00,
+};
+#define ALX_TSO_IP_HDR_LEN	20
+#define ALX_TSO_IP_OPT_LEN	0
+#define ALX_TSO_TCP_HDR_LEN	20
+#define ALX_TSO_TCP_OPT_LEN	12
+
+static void alx_diag_build_pkt(struct sk_buff *skb, u8 *dest_addr,
+			       int seq, bool lso)
+{
+	struct iphdr *iph;
+	struct tcphdr *tcph;
+	int offset;
+	u8 *pkt_data;
+
+	pkt_data = skb->data;
+	memcpy(pkt_data, dest_addr, 6);
+	memset(pkt_data + 6, 0x0, 6);
+	offset = 2 * ETH_ALEN;
+
+	if (lso) {
+		iph = (struct iphdr *)&pkt_data[ETH_HLEN];
+		offset = ETH_HLEN + ALX_TSO_IP_HDR_LEN + ALX_TSO_IP_OPT_LEN;
+		tcph = (struct tcphdr *)&pkt_data[offset];
+		memcpy(pkt_data + ETH_ALEN * 2,
+		       alx_tso_pkt_hdr, sizeof(alx_tso_pkt_hdr));
+		iph->tot_len = htons(skb->len - ETH_HLEN);
+		iph->check = 0;
+		tcph->check = ~csum_tcpudp_magic(
+					iph->saddr,
+					iph->daddr,
+					0, IPPROTO_TCP, 0);
+		offset = ETH_ALEN * 2 + sizeof(alx_tso_pkt_hdr);
+	} else {
+		*(u16 *)&pkt_data[offset] = htons((u16)(skb->len - offset));
+		offset += 2;
+	}
+
+	*(u32 *)&pkt_data[offset] = (u32)seq;
+	offset += 4;
+	*(u16 *)&pkt_data[offset] = (u16)skb->len;
+	for (offset += 2; offset < skb->len; offset++)
+		pkt_data[offset] = (u8)(offset & 0xFF);
+}
+
+static void alx_diag_rss_shift_key(u8 *pkey, int nkey)
+{
+	int len = nkey;
+	int i;
+	u8 carry = 0;
+
+	for (i = len - 1; i >= 0; i--) {
+		if (pkey[i] & 0x80) {
+			pkey[i] = (pkey[i] << 1) | carry;
+			carry = 1;
+		} else {
+			pkey[i] = (pkey[i] << 1) | carry;
+			carry = 0;
+		}
+	}
+}
+
+static int alx_diag_pkt_to_rxq(struct alx_adapter *adpt, struct sk_buff *skb)
+{
+	struct alx_hw *hw = &adpt->hw;
+	struct iphdr *iph;
+	struct tcphdr *tcph;
+	int i, j, que;
+	u8 hash_input[12], key[40];
+	u32 hash;
+
+	if (!ALX_CAP(hw, RSS) || ntohs(ETH_P_IP) != skb->data[ETH_ALEN * 2])
+		return 0;
+
+	iph = (struct iphdr *)&skb->data[ETH_HLEN];
+	i = ETH_HLEN + iph->ihl * 4;
+	tcph = (struct tcphdr *)&skb->data[i];
+	*(u32 *)&hash_input[0] = ntohl(be32_to_cpu(iph->saddr));
+	*(u32 *)&hash_input[4] = ntohl(be32_to_cpu(iph->daddr));
+	*(u16 *)&hash_input[8] = ntohs(be16_to_cpu(tcph->source));
+	*(u16 *)&hash_input[10] = ntohs(be16_to_cpu(tcph->dest));
+
+	/* calcu hash */
+	hash = 0;
+	memcpy(key, hw->rss_key, 40);
+	for (i = 0; i < 12; i++) {
+		for (j = 7; j >= 0; j--) {
+			if (hash_input[i] & (u8)(1 << j))
+				hash ^= swab32(*(u32 *)key);
+			alx_diag_rss_shift_key(key, 40);
+		}
+	}
+	hash &= (hw->rss_idt_size - 1);
+	i = (int)(hash >> 3);
+	j = (int)(hash & 7);
+	que = (int)(hw->rss_idt[i] >> (j * 4)  & 0xF);
+
+	return que;
+}
+
+static int alx_diag_rx_pkt(struct alx_adapter *adpt, int rx_qidx,
+			   struct sk_buff **ppskb)
+{
+	struct alx_rx_queue *rxq;
+	struct rrd_desc *rrd;
+	struct alx_buffer *rxb;
+	struct sk_buff *skb;
+	u16 length;
+	int qnum;
+
+	rxq = alx_hw_rxq(adpt->qnapi[rx_qidx]->rxq);
+
+	rrd = rxq->rrd_hdr + rxq->rrd_cidx;
+	if (!(rrd->word3 & (1 << RRD_UPDATED_SHIFT)))
+		return 1;
+
+	rrd->word3 &= ~(1 << RRD_UPDATED_SHIFT);
+	if (unlikely(FIELD_GETX(rrd->word0, RRD_SI) != rxq->cidx ||
+		     FIELD_GETX(rrd->word0, RRD_NOR) != 1)) {
+		netif_err(adpt, rx_err, adpt->netdev,
+			  "wrong SI/NOR packet! rrd->word0= %08x\n",
+			  rrd->word0);
+		return -1;
+	}
+	rxb = rxq->bf_info + rxq->cidx;
+	dma_unmap_single(rxq->dev,
+			 dma_unmap_addr(rxb, dma),
+			 dma_unmap_len(rxb, size),
+			 DMA_FROM_DEVICE);
+	dma_unmap_len_set(rxb, size, 0);
+	skb = rxb->skb;
+	rxb->skb = NULL;
+
+	if (unlikely(rrd->word3 & (1 << RRD_ERR_RES_SHIFT) ||
+		     rrd->word3 & (1 << RRD_ERR_LEN_SHIFT))) {
+		netif_err(adpt, rx_err, adpt->netdev,
+			  "wrong packet! rrd->word3 is %08x\n",
+			  rrd->word3);
+		rrd->word3 = 0;
+		return -2;
+	}
+	length = FIELD_GETX(rrd->word3, RRD_PKTLEN) - ETH_FCS_LEN;
+	skb_put(skb, length);
+	switch (FIELD_GETX(rrd->word2, RRD_PID)) {
+	case RRD_PID_IPV6UDP:
+	case RRD_PID_IPV4UDP:
+	case RRD_PID_IPV4TCP:
+	case RRD_PID_IPV6TCP:
+		if (rrd->word3 & ((1 << RRD_ERR_L4_SHIFT) |
+				  (1 << RRD_ERR_IPV4_SHIFT))) {
+			netif_err(adpt, rx_err, adpt->netdev,
+				  "rx-chksum error, w2=%X\n",
+				  rrd->word2);
+			return -3;
+		}
+		skb->ip_summed = CHECKSUM_UNNECESSARY;
+		break;
+	}
+	qnum = FIELD_GETX(rrd->word2, RRD_RSSQ) % adpt->nr_rxq;
+	if (rx_qidx != qnum) {
+		netif_err(adpt, rx_err, adpt->netdev,
+			  "rx Q-number is wrong (%d:%d), w2=%X\n",
+			  rx_qidx, qnum, rrd->word2);
+		return -4;
+	}
+
+	if (++rxq->cidx == rxq->count)
+		rxq->cidx = 0;
+	if (++rxq->rrd_cidx == rxq->count)
+		rxq->rrd_cidx = 0;
+
+	alx_alloc_rxring_buf(adpt, rxq);
+
+	*ppskb = skb;
+	return 0;
+}
+
+static int alx_diag_cmp_pkts(struct sk_buff *tx_skb, struct sk_buff *rx_skb,
+			     int mss, int seg_idx)
+{
+	int cmp_offs, cmp_len;
+	int hdr_len, tx_datalen;
+
+	if (mss == 0) {
+		if (rx_skb->len < tx_skb->len ||
+		    memcmp(tx_skb->data, rx_skb->data, tx_skb->len))
+			return -EIO;
+		return 0;
+	}
+	/* LSO */
+	hdr_len = ETH_HLEN + ALX_TSO_IP_HDR_LEN + ALX_TSO_IP_OPT_LEN +
+		  ALX_TSO_TCP_HDR_LEN + ALX_TSO_TCP_OPT_LEN;
+	tx_datalen = tx_skb->len - hdr_len;
+	cmp_offs = hdr_len + mss * seg_idx;
+	cmp_len = tx_skb->len - cmp_offs;
+	if (cmp_len > mss)
+		cmp_len = mss;
+	if (cmp_len > tx_skb->len)
+		return -EIO;
+
+	return memcmp(&tx_skb->data[cmp_offs],
+		      &rx_skb->data[hdr_len],
+		      cmp_len);
+}
+
+static int alx_diag_lpbk_run_packets(struct alx_adapter *adpt)
+{
+	struct alx_hw *hw = &adpt->hw;
+	struct sk_buff *tx_skb, *rx_skb;
+	int i, j, pkt_len, max_len, mss;
+	struct alx_tx_queue *txq;
+	int q_idx, seg_idx, nr_pkts;
+	struct tpd_desc *tpd;
+	dma_addr_t dma;
+	int err;
+
+	max_len = hw->mtu + ETH_HLEN;
+	for (i = 0; i < 1000; i++) {
+		pkt_len = alx_diag_pkt_len[i % ARRAY_SIZE(alx_diag_pkt_len)];
+		mss = 0;
+		nr_pkts = 1;
+		if (pkt_len > max_len) {
+			mss = max_len - ETH_ALEN * 2 - sizeof(alx_tso_pkt_hdr);
+			if (mss < 0) {
+				mss = 0;
+				pkt_len = max_len;
+			} else {
+				nr_pkts = DIV_ROUND_UP(pkt_len - ETH_ALEN * 2 -
+						sizeof(alx_tso_pkt_hdr), mss);
+			}
+		}
+		tx_skb = netdev_alloc_skb(adpt->netdev, pkt_len);
+		if (!tx_skb)
+			return -ENOMEM;
+		skb_put(tx_skb, pkt_len);
+		alx_diag_build_pkt(tx_skb, hw->mac_addr, i, mss != 0);
+		dma = dma_map_single(&adpt->pdev->dev, tx_skb->data, pkt_len,
+				     DMA_TO_DEVICE);
+		if (dma_mapping_error(&adpt->pdev->dev, dma)) {
+			dev_kfree_skb(tx_skb);
+			return -EIO;
+		}
+
+		txq = adpt->qnapi[i % adpt->nr_txq]->txq;
+		tpd = txq->tpd_hdr + txq->pidx;
+		memset(tpd, 0, sizeof(struct tpd_desc));
+
+		if (mss) {
+			tpd->word1 |= 1 << TPD_IPV4_SHIFT;
+			tpd->word1 |= 1 << TPD_LSO_EN_SHIFT;
+			tpd->word1 |= FIELDX(TPD_MSS, mss);
+			tpd->word1 |= FIELDX(TPD_L4HDROFFSET,
+					ETH_HLEN +
+					ALX_TSO_IP_HDR_LEN +
+					ALX_TSO_IP_OPT_LEN);
+		}
+		tpd->adrl.addr = cpu_to_le64(dma);
+		FIELD_SET32(tpd->word0, TPD_BUFLEN, pkt_len);
+		tpd->word1 |= 1 << TPD_EOP_SHIFT;
+
+		if (++txq->pidx == txq->count)
+			txq->pidx = 0;
+		wmb();
+		ALX_MEM_W16(hw, txq->p_reg, txq->pidx);
+
+		/* wait packet loopbacked. */
+		q_idx = alx_diag_pkt_to_rxq(adpt, tx_skb);
+		seg_idx = 0;
+
+		for (j = 0; j < 500 && nr_pkts > 0; j++) {
+			udelay(100);
+			err = alx_diag_rx_pkt(adpt, q_idx, &rx_skb);
+			if (err > 0)
+				continue;
+			if (err < 0) {
+				err = -EIO;
+				goto out;
+			}
+
+			/* got 1 packet/segment, compare */
+			err = alx_diag_cmp_pkts(tx_skb, rx_skb, mss, seg_idx);
+			dev_kfree_skb(rx_skb);
+			if (err) {
+				err = -EIO;
+				goto out;
+			}
+			seg_idx++;
+			nr_pkts--;
+		}
+		if (err) {
+			err = -EIO;
+			goto out;
+		}
+		dev_kfree_skb(tx_skb);
+	}
+
+	return 0;
+
+out:
+	dma_unmap_single(&adpt->pdev->dev, dma, tx_skb->len, DMA_TO_DEVICE);
+	dev_kfree_skb(tx_skb);
+	return err;
+}
+
+enum ALX_LPBK_MODE {
+	ALX_LPBK_MAC = 0,
+	ALX_LPBK_PHY,
+};
+static int alx_diag_speed[] = {SPEED_1000, SPEED_100, SPEED_10};
+
+static int alx_diag_lpbk_init_hw(struct alx_adapter *adpt, int mode, int speed)
+{
+	struct alx_hw *hw = &adpt->hw;
+	int i, err;
+	u32 val;
+
+	alx_reset_pcie(hw);
+	alx_reset_phy(hw, false);
+	err = alx_reset_mac(hw);
+	if (err) {
+		netif_err(adpt, hw, adpt->netdev,
+			  "loopback: reset mac fail, err=%d\n", err);
+		goto err_hw;
+	}
+	hw->rx_ctrl |= ALX_MAC_CTRL_LPBACK_EN |
+		       ALX_MAC_CTRL_DBG_EN;
+
+	/* PHY configuration */
+	err = alx_write_phy_reg(hw, 16, 0x0800);
+	if (err) {
+		netif_err(adpt, hw, adpt->netdev,
+			  "loopback: fix channel, err=%d\n", err);
+		goto err_hw;
+	}
+	switch (speed) {
+	case SPEED_1000:
+		alx_write_phy_dbg(hw, 0x11, 0x5553);
+		alx_write_phy_reg(hw, MII_BMCR, 0x8140);
+		break;
+	case SPEED_100:
+		alx_write_phy_reg(hw, MII_BMCR, 0xA100);
+		break;
+	default:
+		alx_write_phy_reg(hw, MII_BMCR, 0x8100);
+		break;
+	}
+	msleep(100);
+
+	if (mode == ALX_LPBK_PHY) {
+		u16 spd;
+		bool linkup;
+
+		/* wait for link */
+		for (i = 0; i < 50; i++) {
+			msleep(100);
+			err = alx_get_phy_link(hw, &linkup, &spd);
+			if (err)
+				goto err_hw;
+			if (linkup)
+				break;
+		}
+		if (!linkup) {
+			netif_err(adpt, hw, adpt->netdev,
+				  "no link, check your External-Loopback-Connector !\n");
+			goto err_hw;
+		}
+		hw->rx_ctrl &= ~ALX_MAC_CTRL_LPBACK_EN;
+	}
+
+	alx_init_intr(adpt);
+	alx_init_def_rss_idt(adpt);
+	err = alx_setup_all_ring_resources(adpt);
+	if (err)
+		goto out;
+	alx_configure(adpt);
+	/* disable clk gate for loopback */
+	ALX_MEM_W32(hw, ALX_CLK_GATE, 0);
+	/* disable PLL clk switch for loopback */
+	ALX_MEM_R32(hw, ALX_PHY_CTRL, &val);
+	ALX_MEM_W32(hw, ALX_PHY_CTRL, val | ALX_PHY_CTRL_PLL_ON);
+	hw->link_duplex = FULL_DUPLEX;
+	hw->link_speed = speed;
+	hw->link_up = true;
+	alx_enable_aspm(hw, false, false);
+	alx_start_mac(hw);
+	goto out;
+err_hw:
+	err = -EIO;
+out:
+	return err;
+}
+
+static void alx_diag_lpbk_deinit_hw(struct alx_adapter *adpt)
+{
+	struct alx_hw *hw = &adpt->hw;
+	u32 val;
+
+	alx_reset_mac(hw);
+	hw->rx_ctrl &= ~(ALX_MAC_CTRL_LPBACK_EN | ALX_MAC_CTRL_DBG_EN);
+	alx_enable_aspm(hw, false, false);
+	alx_free_all_ring_resources(adpt);
+	alx_disable_advanced_intr(adpt);
+	/* enable PLL clk switch for loopback */
+	ALX_MEM_R32(hw, ALX_PHY_CTRL, &val);
+	ALX_MEM_W32(hw, ALX_PHY_CTRL, val | ALX_PHY_CTRL_PLL_ON);
+}
+
 static int alx_diag_loopback(struct alx_adapter *adpt, u64 *data, bool phy_lpbk)
 {
-	return 0;
+	int i, err;
+
+	for (i = 0; i < ARRAY_SIZE(alx_diag_speed); i++) {
+		err = alx_diag_lpbk_init_hw(
+			adpt,
+			phy_lpbk ? ALX_LPBK_PHY : ALX_LPBK_MAC,
+			alx_diag_speed[i]);
+		if (err) {
+			*data = i + 1;
+			goto out;
+		}
+		err = alx_diag_lpbk_run_packets(adpt);
+		if (err) {
+			*data = i + 10;
+			goto out;
+		}
+		alx_diag_lpbk_deinit_hw(adpt);
+	}
+out:
+	if (err)
+		alx_diag_lpbk_deinit_hw(adpt);
+
+	return err;
 }
 
 static void alx_self_test(struct net_device *netdev,

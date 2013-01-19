@@ -1141,7 +1141,8 @@ void alx_configure_rss(struct alx_hw *hw, bool en)
 		}
 
 		for (i = 0; i < ARRAY_SIZE(hw->rss_idt); i++)
-			ALX_MEM_W32(hw, ALX_RSS_IDT_TBL0, hw->rss_idt[i]);
+			ALX_MEM_W32(hw, ALX_RSS_IDT_TBL0 + i * 4,
+				    hw->rss_idt[i]);
 
 		FIELD_SET32(ctrl, ALX_RXQ0_RSS_HSTYP, hw->rss_hash_type);
 		FIELD_SET32(ctrl, ALX_RXQ0_RSS_MODE, ALX_RXQ0_RSS_MODE_MQMI);

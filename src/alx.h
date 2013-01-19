@@ -189,8 +189,20 @@ struct alx_adapter {
 #define ALX_FLAG_CLEAR(_adpt, _FLAG) (\
 	clear_bit(ALX_FLAG_##_FLAG, &(_adpt)->flags))
 
+static inline struct alx_rx_queue *alx_hw_rxq(struct alx_rx_queue *rxq)
+{
+	struct alx_adapter *adpt = netdev_priv(rxq->netdev);
+
+	return ALX_CAP(&adpt->hw, MRQ) ? rxq : adpt->qnapi[0]->rxq;
+}
 
 /* needed by alx_ethtool.c */
+extern void alx_configure(struct alx_adapter *adpt);
+extern void alx_free_all_ring_resources(struct alx_adapter *adpt);
+extern int alx_setup_all_ring_resources(struct alx_adapter *adpt);
+extern void alx_init_def_rss_idt(struct alx_adapter *adpt);
+extern int alx_alloc_rxring_buf(struct alx_adapter *adpt,
+				struct alx_rx_queue *rxq);
 extern void alx_init_intr(struct alx_adapter *adpt);
 extern void alx_disable_advanced_intr(struct alx_adapter *adpt);
 extern void alx_reinit(struct alx_adapter *adpt);

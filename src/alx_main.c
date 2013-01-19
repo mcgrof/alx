@@ -379,8 +379,8 @@ static inline void alx_skb_queue_tail(struct alx_rx_queue *rxq,
 		spin_unlock(&rxq->list.lock);
 }
 
-static int alx_alloc_rxring_buf(struct alx_adapter *adpt,
-				struct alx_rx_queue *rxq)
+int alx_alloc_rxring_buf(struct alx_adapter *adpt,
+			 struct alx_rx_queue *rxq)
 {
 	struct sk_buff *skb;
 	struct alx_buffer *cur_buf;
@@ -470,7 +470,7 @@ static void alx_free_rxring_buf(struct alx_rx_queue *rxq)
 	rxq->rrd_cidx = 0;
 }
 
-static int alx_setup_all_ring_resources(struct alx_adapter *adpt)
+int alx_setup_all_ring_resources(struct alx_adapter *adpt)
 {
 	int err;
 
@@ -549,7 +549,7 @@ static void alx_free_all_rings_buf(struct alx_adapter *adpt)
 			alx_free_rxring_buf(adpt->qnapi[i]->rxq);
 }
 
-static void alx_free_all_ring_resources(struct alx_adapter *adpt)
+void alx_free_all_ring_resources(struct alx_adapter *adpt)
 {
 	alx_free_all_rings_buf(adpt);
 	alx_free_rings(adpt);
@@ -714,13 +714,6 @@ next_pkt:
 	clear_bit(ALX_RQ_USING, &rxq->flag);
 
 	return true;
-}
-
-static inline struct alx_rx_queue *alx_hw_rxq(struct alx_rx_queue *rxq)
-{
-	struct alx_adapter *adpt = netdev_priv(rxq->netdev);
-
-	return ALX_CAP(&adpt->hw, MRQ) ? rxq : adpt->qnapi[0]->rxq;
 }
 
 static inline struct napi_struct *alx_rxq_to_napi(
@@ -1047,7 +1040,7 @@ static const u8 def_rss_key[40] __devinitdata = {
 	0x14, 0x36, 0x4D, 0x17, 0x3B, 0xED, 0x20, 0x0D,
 };
 
-static void alx_init_def_rss_idt(struct alx_adapter *adpt)
+void alx_init_def_rss_idt(struct alx_adapter *adpt)
 {
 	struct alx_hw *hw = &adpt->hw;
 	int i, x, y;
@@ -1061,6 +1054,7 @@ static void alx_init_def_rss_idt(struct alx_adapter *adpt)
 		hw->rss_idt[x] |= (val & 0xF) << y;
 	}
 }
+
 /* alx_init_adapter -
  *    initialize general software structure (struct alx_adapter).
  *    fields are inited based on PCI device information.
@@ -1203,7 +1197,7 @@ static int alx_change_mtu(struct net_device *netdev, int new_mtu)
  *  1. interrupt vectors
  *  2. enable control for rx modules
  */
-static void alx_configure(struct alx_adapter *adpt)
+void alx_configure(struct alx_adapter *adpt)
 {
 	struct alx_hw *hw = &adpt->hw;
 
