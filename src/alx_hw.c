@@ -855,7 +855,7 @@ int __alx_read_phy_core(struct alx_hw *hw, bool ext, u8 dev,
 	*phy_data = 0;
 
 	/* use slow clock when it's in hibernation status */
-	clk_sel = hw->link_up ?
+	clk_sel = !hw->link_up ?
 		ALX_MDIO_CLK_SEL_25MD128 : ALX_MDIO_CLK_SEL_25MD4;
 
 	if (ext) {
@@ -905,7 +905,7 @@ int __alx_write_phy_core(struct alx_hw *hw, bool ext, u8 dev,
 	__alx_stop_phy_polling(hw);
 
 	/* use slow clock when it's in hibernation status */
-	clk_sel = hw->link_up ?
+	clk_sel = !hw->link_up ?
 		ALX_MDIO_CLK_SEL_25MD128 : ALX_MDIO_CLK_SEL_25MD4;
 
 	if (ext) {
