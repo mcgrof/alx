@@ -524,6 +524,10 @@ struct alx_hw {
 
 	struct alx_hw_stats	hw_stats;
 	u32			sleep_ctrl;
+	/* sram address for pattern wol */
+	u32			ptrn_ofs;
+	/* max patterns number */
+	u16			max_ptrns;
 
 	spinlock_t		mdio_lock;
 	struct mdio_if_info	mdio;
@@ -534,6 +538,8 @@ struct alx_hw {
 	bool			lnk_patch;
 	/* PHY hibernation patch flag */
 	bool			hib_patch;
+	/* FPGA or ASIC */
+	bool			is_fpga;
 };
 
 #define ALX_DID(_hw)		((_hw)->device_id)

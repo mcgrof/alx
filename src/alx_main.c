@@ -1012,7 +1012,7 @@ static int __devinit alx_identify_hw(struct alx_adapter *adpt)
 	case ALX_DEV_ID_AR8162:
 	case ALX_DEV_ID_AR8171:
 	case ALX_DEV_ID_AR8172:
-		if (rev > ALX_REV_B0)
+		if (rev > ALX_REV_C0)
 			break;
 		err = 0;
 		ALX_CAP_SET(hw, L0S);
@@ -1021,7 +1021,14 @@ static int __devinit alx_identify_hw(struct alx_adapter *adpt)
 		ALX_CAP_SET(hw, RSS);
 		ALX_CAP_SET(hw, MSIX);
 		ALX_CAP_SET(hw, SWOI);
-		hw->max_dma_chnl = rev == ALX_REV_B0 ? 4 : 2;
+		hw->max_dma_chnl = rev >= ALX_REV_B0 ? 4 : 2;
+		if (rev < ALX_REV_C0) {
+			hw->ptrn_ofs = 0x600;
+			hw->max_ptrns = 8;
+		} else {
+			hw->ptrn_ofs = 0x14000;
+			hw->max_ptrns = 16;
+		}
 		break;
 	}
 
@@ -1109,6 +1116,7 @@ static int __devinit alx_init_sw(struct alx_adapter *adpt)
 			ALX_MAC_CTRL_RXFC_EN |
 			ALX_MAC_CTRL_TXFC_EN |
 			FIELDX(ALX_MAC_CTRL_PRMBLEN, 7);
+	hw->is_fpga = false;
 
 	atomic_set(&adpt->irq_sem, 1);
 	ALX_FLAG_SET(adpt, HALT);

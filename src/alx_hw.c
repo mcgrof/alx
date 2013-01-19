@@ -302,6 +302,9 @@ void alx_reset_phy(struct alx_hw *hw, bool hib_en)
 	for (i = 0; i < ALX_PHY_CTRL_DSPRST_TO; i++)
 		udelay(10);
 
+	if (hw->is_fpga)
+		goto set_imr;
+
 	/* phy power saving & hib */
 	if (hib_en) {
 		alx_write_phy_dbg(hw, ALX_MIIDBG_LEGCYPS, ALX_LEGCYPS_DEF);
@@ -364,6 +367,7 @@ void alx_reset_phy(struct alx_hw *hw, bool hib_en)
 			      phy_val | ALX_CLDCTRL5_BP_VD_HLFBIAS);
 	}
 
+set_imr:
 	/* set phy interrupt mask */
 	alx_write_phy_reg(hw, ALX_MII_IER,
 		ALX_IER_LINK_UP | ALX_IER_LINK_DOWN);
@@ -800,6 +804,35 @@ bool __alx_wait_mdio_idle(struct alx_hw *hw)
 	return i != ALX_MDIO_MAX_AC_TO;
 }
 
+void __alx_stop_phy_polling(struct alx_hw *hw)
+{
+	if (!hw->is_fpga)
+		return;
+
+	ALX_MEM_W32(hw, ALX_MDIO, 0);
+	__alx_wait_mdio_idle(hw);
+}
+
+void __alx_start_phy_polling(struct alx_hw *hw, u16 clk_sel)
+{
+	u32 val;
+
+	if (!hw->is_fpga)
+		return;
+
+	val = ALX_MDIO_SPRES_PRMBL |
+	      FIELDX(ALX_MDIO_CLK_SEL, clk_sel) |
+	      FIELDX(ALX_MDIO_REG, 1) |
+	      ALX_MDIO_START |
+	      ALX_MDIO_OP_READ;
+	ALX_MEM_W32(hw, ALX_MDIO, val);
+	__alx_wait_mdio_idle(hw);
+	val |= ALX_MDIO_AUTO_POLLING;
+	val &= ~ALX_MDIO_START;
+	ALX_MEM_W32(hw, ALX_MDIO, val);
+	udelay(30);
+}
+
 /* __alx_read_phy_core
  *     core function to read register in PHY via MDIO interface
  * ext: extension register (see IEEE 802.3)
@@ -811,6 +844,8 @@ int __alx_read_phy_core(struct alx_hw *hw, bool ext, u8 dev,
 {
 	u32 val, clk_sel;
 	int err;
+
+	__alx_stop_phy_polling(hw);
 
 	*phy_data = 0;
 
@@ -845,6 +880,8 @@ int __alx_read_phy_core(struct alx_hw *hw, bool ext, u8 dev,
 		err = 0;
 	}
 
+	__alx_start_phy_polling(hw, clk_sel);
+
 	return err;
 }
 
@@ -859,6 +896,8 @@ int __alx_write_phy_core(struct alx_hw *hw, bool ext, u8 dev,
 {
 	u32 val, clk_sel;
 	int err = 0;
+
+	__alx_stop_phy_polling(hw);
 
 	/* use slow clock when it's in hibernation status */
 	clk_sel = hw->link_up ?
@@ -885,6 +924,8 @@ int __alx_write_phy_core(struct alx_hw *hw, bool ext, u8 dev,
 
 	if (unlikely(!__alx_wait_mdio_idle(hw)))
 		err = ALX_ERR_MIIBUSY;
+
+	__alx_start_phy_polling(hw, clk_sel);
 
 	return err;
 }
