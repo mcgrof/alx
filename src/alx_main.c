@@ -1101,7 +1101,7 @@ static int __devinit alx_init_sw(struct alx_adapter *adpt)
 			ADVERTISED_10baseT_Half |
 			ADVERTISED_10baseT_Full |
 			ADVERTISED_100baseT_Full |
-			ADVERTISED_10baseT_Half |
+			ADVERTISED_100baseT_Half |
 			ADVERTISED_1000baseT_Full;
 	hw->flowctrl = ALX_FC_ANEG | ALX_FC_RX | ALX_FC_TX;
 	hw->wrr_ctrl = ALX_WRR_PRI_RESTRICT_NONE;

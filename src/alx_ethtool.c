@@ -40,7 +40,8 @@ static int alx_get_settings(struct net_device *netdev,
 			   SUPPORTED_100baseT_Half |
 			   SUPPORTED_100baseT_Full |
 			   SUPPORTED_Autoneg       |
-			   SUPPORTED_TP);
+			   SUPPORTED_TP            |
+			   SUPPORTED_Pause);
 	if (ALX_CAP(hw, GIGA))
 		ecmd->supported |= SUPPORTED_1000baseT_Full;
 
@@ -54,9 +55,20 @@ static int alx_get_settings(struct net_device *netdev,
 		AUTONEG_ENABLE : AUTONEG_DISABLE;
 	ecmd->transceiver = XCVR_INTERNAL;
 
+	if (hw->flowctrl & ALX_FC_ANEG &&
+	    hw->adv_cfg & ADVERTISED_Autoneg) {
+		if (hw->flowctrl & ALX_FC_RX) {
+			ecmd->advertising |= ADVERTISED_Pause;
+			if (!(hw->flowctrl & ALX_FC_TX))
+				ecmd->advertising |= ADVERTISED_Asym_Pause;
+		} else if (hw->flowctrl & ALX_FC_TX)
+			ecmd->advertising |= ADVERTISED_Asym_Pause;
+	}
+
 	if (hw->link_up) {
 		ethtool_cmd_speed_set(ecmd, hw->link_speed);
-		ecmd->duplex = hw->link_duplex;
+		ecmd->duplex = hw->link_duplex == FULL_DUPLEX ?
+			DUPLEX_FULL : DUPLEX_HALF;
 	} else {
 		ethtool_cmd_speed_set(ecmd, -1);
 		ecmd->duplex = -1;
