@@ -157,7 +157,7 @@ void alx_reset_osc(struct alx_hw *hw, u8 rev)
 	 * PERST, driver need re-calibrate before enter Sleep for WoL
 	 */
 	ALX_MEM_R32(hw, ALX_MISC, &val);
-	if (rev == ALX_REV_B0) {
+	if (rev >= ALX_REV_B0) {
 		/* restore over current protection def-val,
 		 * this val could be reset by MAC-RST
 		 */
@@ -269,6 +269,11 @@ int alx_reset_mac(struct alx_hw *hw)
 	ALX_MEM_R32(hw, ALX_SERDES, &val);
 	ALX_MEM_W32(hw, ALX_SERDES,
 		val | ALX_SERDES_MACCLK_SLWDWN | ALX_SERDES_PHYCLK_SLWDWN);
+
+	/* mac reset cause MDIO ctrl restore non-polling status */
+	if (hw->is_fpga)
+		__alx_start_phy_polling(hw, ALX_MDIO_CLK_SEL_25MD128);
+
 
 	return ret;
 }
@@ -1209,7 +1214,7 @@ void alx_configure_basic(struct alx_hw *hw)
 	ALX_MEM_W32(hw, ALX_CLK_GATE, ALX_CLK_GATE_ALL_A0);
 
 	/* idle timeout to switch clk_125M */
-	if (chip_rev == ALX_REV_B0) {
+	if (chip_rev >= ALX_REV_B0) {
 		ALX_MEM_W32(hw, ALX_IDLE_DECISN_TIMER,
 			ALX_IDLE_DECISN_TIMER_DEF);
 	}

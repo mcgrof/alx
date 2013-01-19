@@ -630,6 +630,7 @@ void alx_configure_rss(struct alx_hw *hw, bool en);
 void alx_mask_msix(struct alx_hw *hw, int index, bool mask);
 int alx_select_powersaving_speed(struct alx_hw *hw, u16 *speed);
 void __alx_update_hw_stats(struct alx_hw *hw);
+void __alx_start_phy_polling(struct alx_hw *hw, u16 clk_sel);
 
 #define alx_get_readrq(_hw) pcie_get_readrq((_hw)->pdev)
 #define alx_set_readrq(_hw, _v) pcie_set_readrq((_hw)->pdev, _v)
