@@ -1183,7 +1183,7 @@ static int alx_change_mtu(struct net_device *netdev, int new_mtu)
 		return -EINVAL;
 	}
 	/* set MTU */
-	if (old_mtu != new_mtu && netif_running(netdev)) {
+	if (old_mtu != new_mtu) {
 		netif_info(adpt, drv, adpt->netdev,
 			   "changing MTU from %d to %d\n",
 			   netdev->mtu, new_mtu);
@@ -1192,7 +1192,8 @@ static int alx_change_mtu(struct net_device *netdev, int new_mtu)
 		adpt->rxbuf_size = new_mtu > ALX_DEF_RXBUF_SIZE ?
 				   ALIGN(max_frame, 8) : ALX_DEF_RXBUF_SIZE;
 		netdev_update_features(netdev);
-		alx_reinit(adpt);
+		if (netif_running(netdev))
+			alx_reinit(adpt);
 	}
 
 	return 0;
