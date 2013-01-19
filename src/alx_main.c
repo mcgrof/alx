@@ -31,7 +31,15 @@
 #include "alx_hw.h"
 #include "alx.h"
 
+#define DRV_MAJ		1
+#define DRV_MIN		2
+#define DRV_PATCH	1
+#define DRV_MODULE_VER \
+	__stringify(DRV_MAJ) "." __stringify(DRV_MIN) "." \
+	__stringify(DRV_PATCH)
+
 char alx_drv_name[] = "alx";
+char alx_drv_version[] = DRV_MODULE_VER;
 static const char alx_drv_desc[] =
 "Qualcomm Atheros(R) AR816x/AR817x PCI-E Ethernet Network Driver";
 
@@ -57,7 +65,7 @@ MODULE_DEVICE_TABLE(pci, alx_pci_tbl);
 MODULE_AUTHOR("Qualcomm Corporation, <nic-devel@qualcomm.com>");
 MODULE_DESCRIPTION("Qualcomm Atheros Gigabit Ethernet Driver");
 MODULE_LICENSE("Dual BSD/GPL");
-
+MODULE_VERSION(DRV_MODULE_VER);
 
 static int alx_poll(struct napi_struct *napi, int budget);
 static irqreturn_t alx_msix_ring(int irq, void *data);

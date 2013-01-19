@@ -267,6 +267,7 @@ static void alx_get_drvinfo(struct net_device *netdev,
 	struct alx_adapter *adpt = netdev_priv(netdev);
 
 	strlcpy(drvinfo->driver, alx_drv_name, sizeof(drvinfo->driver));
+	strlcpy(drvinfo->version, alx_drv_version, sizeof(drvinfo->version));
 	strlcpy(drvinfo->fw_version, "N/A", sizeof(drvinfo->fw_version));
 	strlcpy(drvinfo->bus_info, pci_name(adpt->pdev),
 		sizeof(drvinfo->bus_info));
