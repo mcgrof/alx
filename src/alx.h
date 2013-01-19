@@ -174,6 +174,9 @@ struct alx_adapter {
 	u16			msg_enable;
 
 	unsigned long		flags;
+
+	/* ethtool private flags */
+	u32			eth_pflags;
 };
 
 

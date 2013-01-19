@@ -239,7 +239,7 @@ static const u32 hw_regs[] = {
 
 static int alx_get_regs_len(struct net_device *netdev)
 {
-	return (ARRAY_SIZE(hw_regs) + 1) * 4;
+	return (ARRAY_SIZE(hw_regs) + 0x20) * 4;
 }
 
 static void alx_get_regs(struct net_device *netdev,
@@ -252,29 +252,16 @@ static void alx_get_regs(struct net_device *netdev,
 
 	regs->version = (ALX_DID(hw) << 16) | (ALX_REVID(hw) << 8) | 1;
 
-	memset(buff, 0, (ARRAY_SIZE(hw_regs) + 1) * 4);
+	memset(buff, 0, (ARRAY_SIZE(hw_regs) + 0x20) * 4);
 
 	for (i = 0; i < ARRAY_SIZE(hw_regs); i++, p++)
 		ALX_MEM_R32(hw, hw_regs[i], p);
 
-	/* last one for PHY Link Status */
-	alx_read_phy_reg(hw, MII_BMSR, (u16 *)p);
-}
-
-static void alx_get_drvinfo(struct net_device *netdev,
-			    struct ethtool_drvinfo *drvinfo)
-{
-	struct alx_adapter *adpt = netdev_priv(netdev);
-
-	strlcpy(drvinfo->driver, alx_drv_name, sizeof(drvinfo->driver));
-	strlcpy(drvinfo->version, alx_drv_version, sizeof(drvinfo->version));
-	strlcpy(drvinfo->fw_version, "N/A", sizeof(drvinfo->fw_version));
-	strlcpy(drvinfo->bus_info, pci_name(adpt->pdev),
-		sizeof(drvinfo->bus_info));
-	drvinfo->n_stats = 0;
-	drvinfo->testinfo_len = 0;
-	drvinfo->regdump_len = alx_get_regs_len(netdev);
-	drvinfo->eedump_len = 0;
+	/* last 0x20 for PHY register */
+	for (i = 0; i < 0x20; i++) {
+		alx_read_phy_reg(hw, i, (u16 *)p);
+		p++;
+	}
 }
 
 static void alx_get_wol(struct net_device *netdev,
@@ -312,6 +299,8 @@ static int alx_set_wol(struct net_device *netdev, struct ethtool_wolinfo *wol)
 	if (wol->wolopts & WAKE_PHY)
 		hw->sleep_ctrl |= ALX_SLEEP_WOL_PHY;
 
+	netdev_info(adpt->netdev, "wol-ctrl=%X\n", hw->sleep_ctrl);
+
 	device_set_wakeup_enable(&adpt->pdev->dev, hw->sleep_ctrl);
 
 	return 0;
@@ -328,6 +317,631 @@ static int alx_nway_reset(struct net_device *netdev)
 	return 0;
 }
 
+static const char alx_gstrings_test[][ETH_GSTRING_LEN] = {
+	"register test  (offline)",
+	"memory test    (offline)",
+	"interrupt test (offline)",
+	"loopback test  (offline)",
+	"link test      (offline)"
+};
+#define ALX_TEST_LEN (sizeof(alx_gstrings_test) / ETH_GSTRING_LEN)
+
+/* private flags */
+#define ALX_ETH_PF_LNK_10MH	BIT(0)
+#define ALX_ETH_PF_LNK_10MF	BIT(1)
+#define ALX_ETH_PF_LNK_100MH	BIT(2)
+#define ALX_ETH_PF_LNK_100MF	BIT(3)
+#define ALX_ETH_PF_LNK_1000MF	BIT(4)
+#define ALX_ETH_PF_LNK_MASK	(\
+	ALX_ETH_PF_LNK_10MH |\
+	ALX_ETH_PF_LNK_10MF |\
+	ALX_ETH_PF_LNK_100MH |\
+	ALX_ETH_PF_LNK_100MF |\
+	ALX_ETH_PF_LNK_1000MF)
+
+static const char alx_gstrings_stats[][ETH_GSTRING_LEN] = {
+	"rx_packets",
+	"rx_bcast_packets",
+	"rx_mcast_packets",
+	"rx_pause_packets",
+	"rx_ctrl_packets",
+	"rx_fcs_errors",
+	"rx_length_errors",
+	"rx_bytes",
+	"rx_runt_packets",
+	"rx_fragments",
+	"rx_64B_or_less_packets",
+	"rx_65B_to_127B_packets",
+	"rx_128B_to_255B_packets",
+	"rx_256B_to_511B_packets",
+	"rx_512B_to_1023B_packets",
+	"rx_1024B_to_1518B_packets",
+	"rx_1519B_to_mtu_packets",
+	"rx_oversize_packets",
+	"rx_rxf_ov_drop_packets",
+	"rx_rrd_ov_drop_packets",
+	"rx_align_errors",
+	"rx_bcast_bytes",
+	"rx_mcast_bytes",
+	"rx_address_errors",
+	"tx_packets",
+	"tx_bcast_packets",
+	"tx_mcast_packets",
+	"tx_pause_packets",
+	"tx_exc_defer_packets",
+	"tx_ctrl_packets",
+	"tx_defer_packets",
+	"tx_bytes",
+	"tx_64B_or_less_packets",
+	"tx_65B_to_127B_packets",
+	"tx_128B_to_255B_packets",
+	"tx_256B_to_511B_packets",
+	"tx_512B_to_1023B_packets",
+	"tx_1024B_to_1518B_packets",
+	"tx_1519B_to_mtu_packets",
+	"tx_single_collision",
+	"tx_multiple_collisions",
+	"tx_late_collision",
+	"tx_abort_collision",
+	"tx_underrun",
+	"tx_trd_eop",
+	"tx_length_errors",
+	"tx_trunc_packets",
+	"tx_bcast_bytes",
+	"tx_mcast_bytes",
+	"tx_update",
+};
+
+#define ALX_STATS_LEN (sizeof(alx_gstrings_stats) / ETH_GSTRING_LEN)
+
+static void alx_get_strings(struct net_device *netdev, u32 stringset, u8 *buf)
+{
+	switch (stringset) {
+	case ETH_SS_TEST:
+		memcpy(buf, &alx_gstrings_test, sizeof(alx_gstrings_test));
+		break;
+	case ETH_SS_STATS:
+		memcpy(buf, &alx_gstrings_stats, sizeof(alx_gstrings_stats));
+		break;
+	}
+}
+
+static int alx_get_sset_count(struct net_device *netdev, int sset)
+{
+	switch (sset) {
+	case ETH_SS_STATS:
+		return ALX_STATS_LEN;
+	case ETH_SS_TEST:
+		return ALX_TEST_LEN;
+	default:
+		return -ENOTSUPP;
+	}
+}
+
+struct alx_reg_attr {
+	u16 reg;
+	u32 ro_mask;
+	u32 rw_mask;
+	u32 rc_mask;
+	u32 rst_val;
+	u8  rst_affect;
+};
+
+struct alx_reg_attr ar816x_regs_a[] = {
+	{0x1400, 0xffff80E0,	0x4D00,		0x0,        0x40020000, 0},
+	{0x1404, 0x0,		0xffffffff,     0x0,        0x0,        1},
+	{0x1408, 0x0,		0xffffffff,     0x0,        0x0,        1},
+	{0x140c, 0xFFFF0000,	0x0,            0x0,        0xffff3800, 0},
+	{0x1410, 0xffffffff,	0x0,            0x0,        0x0000,     0},
+	{0x1414, 0x0,		0x0,            0x0,        0x0,        1},
+	{0x141C, 0xfffffffe,	0x0,            0x0,        0x0,        1},
+	{0x1420, 0xfffffffe,	0x0,            0x0,        0x0,        1},
+	{0x1484, 0x0,		0x7f7f7f7f,     0x0,        0x60405060, 1},
+	{0x1490, 0x0,		0xffffffff,     0x0,        0x0,        0},
+	{0x1494, 0x0,		0xffffffff,     0x0,        0x0,        0},
+	{0x1498, 0x0,		0xffff3ff,      0x0,        0x07a1f037, 1},
+	{0x149C, 0xffff0000,	0xffff,         0x0,        0x600,      1},
+	{0x14a0, 0x808078c0,	0x7f803f,       0x7f000700, 0x0,        1},
+	{0x14a4, 0x0,		0xFFFFFFFF,     0x0,        0x0,        1},
+	{0x14a8, 0xFF000000,	0x00FFFFFF,     0x0,        0x0,        1},
+	{0x1540, 0x0,		0xffffffff,     0x0,        0x0,        0},
+	{0x1544, 0x0,		0xffffffff,     0x0,        0x0,        0},
+	{0x1550, 0x0,		0xffffffff,     0x0,        0x0,        0},
+	{0x1560, 0xFFFFF000,	0xfff,          0x0,        0x0,        0},
+	{0x1564, 0xFFFF0000,	0xffff,         0x0,        0x0,        0},
+	{0x1568, 0x0,		0xffffffff,     0x0,        0x0,        0},
+	{0x1578, 0xFFFFF000,	0xfff,          0x0,        0x0,        0},
+	{0x157C, 0x0,		0xffffffff,     0x0,        0x0,        0},
+	{0x1580, 0x0,		0xffffffff,     0x0,        0x0,        0},
+	{0x1584, 0xFFFF0000,	0xffff,         0x0,        0x0,        0},
+	{0x1588, 0x0,		0xffffffff,     0x0,        0x0,        0},
+	{0x1590, 0xFF00,	0xFFFF00DF,     0x0,        0x01000045, 1},
+	{0x1594, 0xFFFFF800,	0x7FF,          0x0,        191,        1},
+	{0x15A0, 0x200E0040,	0x5FF1FFBF,     0x0,        0x40810083, 1},
+	{0x15A4, 0xFFFFF000,	0xFFF,          0x0,        0x1210,     1},
+	{0x15A8, 0xF000F000,	0x0FFF0FFF,     0x0,        0x02E003C0, 1},
+	{0x15AC, 0xF000,	0xFFFF0FFF,     0x0,        0x0100,     1},
+	{0x15C4, 0xFF000000,	0xFFFFFF,       0x0,        0x0,        1},
+	{0x15C8, 0xFFFF0000,	0xFFFF,         0x0,        0x0100,     1},
+	{0x15E0, 0xFFFFF000,	0xFFF,          0x0,        0x0,        1},
+	{0x15F0, 0x0,		0xFFFFFFFF,     0x0,        0x0,        1},
+	{0x15F4, 0xFFFFFFFF,	0x0,            0x0,        0x0,        1},
+	{0x15F8, 0xFFFFFFFF,	0x0,            0x0,        0x0,        1},
+	{0x15FC, 0xFFFFFFFF,	0x0,            0x0,        0x0,        1},
+	{0x1700, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1704, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1708, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x170c, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1710, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1714, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1718, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x171c, 0xffffffff,	0x0,            0xffffffff, 0x0,        1},
+	{0x1720, 0xffffffff,	0x0,            0xffffffff, 0x0,        1},
+	{0x1724, 0xffffffff,	0x0,            0xffffffff, 0x0,        1},
+	{0x1728, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x172c, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1730, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1734, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1738, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x173c, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1740, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1744, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1748, 0xffffffff,	0x0,            0xffff,     0x0,        1},
+	{0x174c, 0xffffffff,	0x0,            0xffff,     0x0,        1},
+	{0x1750, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1754, 0xffffffff,	0x0,            0xffffffff, 0x0,        1},
+	{0x1758, 0xffffffff,	0x0,            0xffffffff, 0x0,        1},
+	{0x175c, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1760, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1764, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1768, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x176c, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1770, 0xffffffff,	0x0,            0xffff,     0x0,        1},
+	{0x1774, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1778, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x177c, 0xffffffff,	0x0,            0xffffffff, 0x0,        1},
+	{0x1780, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1784, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1788, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x178c, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1790, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1794, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1798, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x179c, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x17a0, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x17a4, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x17a8, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x17ac, 0xffffffff,	0x0,            0xffff,     0x0,        1},
+	{0x17b0, 0xffffffff,	0x0,            0xffff,     0x0,        1},
+	{0x17b4, 0xffffffff,	0x0,            0xffff,     0x0,        1},
+	{0x17b8, 0xffffffff,	0x0,            0xffff,     0x0,        1},
+	{0x17bc, 0xffffffff,	0x0,            0xffffffff, 0x0,        1},
+	{0x17c0, 0xffffffff,	0x0,            0xffffffff, 0x0,        1},
+	{0xffff, 0, 0, 0, 0, 0},
+};
+
+struct alx_reg_attr ar816x_regs_b[] = {
+	{0x1400, 0xffff80E0,	0x4D00,		0x0,        0x40020000, 0},
+	{0x1404, 0x0,		0xffffffff,     0x0,        0x0,        1},
+	{0x1408, 0x0,		0xffffffff,     0x0,        0x0,        1},
+	{0x140c, 0xFFFF0000,	0x0,            0x0,        0xffff3800, 0},
+	{0x1410, 0xffffffff,	0x0,            0x0,        0x0000,     0},
+	{0x1414, 0x0,		0x0,            0x0,        0x0,        1},
+	{0x141C, 0xfffffffe,	0x0,            0x0,        0x0,        1},
+	{0x1420, 0xfffffffe,	0x0,            0x0,        0x0,        1},
+	{0x1484, 0x0,		0x7f7f7f7f,     0x0,        0x60405018, 1},
+	{0x1490, 0x0,		0xffffffff,     0x0,        0x0,        0},
+	{0x1494, 0x0,		0xffffffff,     0x0,        0x0,        0},
+	{0x1498, 0x0,		0xffff3ff,      0x0,        0x07a1f037, 1},
+	{0x149C, 0xffff0000,	0xffff,         0x0,        0x600,      1},
+	{0x14a0, 0x808078c0,	0x7f803f,       0x7f000700, 0x0,        1},
+	{0x14a4, 0x0,		0xFFFFFFFF,     0x0,        0x0,        1},
+	{0x14a8, 0xFF000000,	0x00FFFFFF,     0x0,        0x0,        1},
+	{0x1540, 0x0,		0xffffffff,     0x0,        0x0,        0},
+	{0x1544, 0x0,		0xffffffff,     0x0,        0x0,        0},
+	{0x1550, 0x0,		0xffffffff,     0x0,        0x0,        0},
+	{0x1560, 0xFFFFF000,	0xfff,          0x0,        0x0,        0},
+	{0x1564, 0xFFFF0000,	0xffff,         0x0,        0x0,        0},
+	{0x1568, 0x0,		0xffffffff,     0x0,        0x0,        0},
+	{0x1578, 0xFFFFF000,	0xfff,          0x0,        0x0,        0},
+	{0x157C, 0x0,		0xffffffff,     0x0,        0x0,        0},
+	{0x1580, 0x0,		0xffffffff,     0x0,        0x0,        0},
+	{0x1584, 0xFFFF0000,	0xffff,         0x0,        0x0,        0},
+	{0x1588, 0x0,		0xffffffff,     0x0,        0x0,        0},
+	{0x1590, 0xFF00,	0xFFFF00DF,     0x0,        0x01000045, 1},
+	{0x1594, 0xFFFFF800,	0x7FF,          0x0,        191,        1},
+	{0x15A0, 0x200E0040,	0x5FF1FFBF,     0x0,        0x40810083, 1},
+	{0x15A4, 0xFFFFF000,	0xFFF,          0x0,        0x1210,     1},
+	{0x15A8, 0xF000F000,	0x0FFF0FFF,     0x0,        0x02E003C0, 1},
+	{0x15AC, 0xF000,	0xFFFF0FFF,     0x0,        0x0100,     1},
+	{0x15C4, 0xFF000000,	0xFFFFFF,       0x0,        0x0,        1},
+	{0x15C8, 0xFFFF0000,	0xFFFF,         0x0,        0x0100,     1},
+	{0x15E0, 0xFFFFF000,	0xFFF,          0x0,        0x0,        1},
+	{0x15F0, 0x0,		0xFFFFFFFF,     0x0,        0x0,        1},
+	{0x15F4, 0xFFFFFFFF,	0x0,            0x0,        0x0,        1},
+	{0x15F8, 0xFFFFFFFF,	0x0,            0x0,        0x0,        1},
+	{0x15FC, 0xFFFFFFFF,	0x0,            0x0,        0x0,        1},
+	{0x1700, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1704, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1708, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x170c, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1710, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1714, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1718, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x171c, 0xffffffff,	0x0,            0xffffffff, 0x0,        1},
+	{0x1720, 0xffffffff,	0x0,            0xffffffff, 0x0,        1},
+	{0x1724, 0xffffffff,	0x0,            0xffffffff, 0x0,        1},
+	{0x1728, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x172c, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1730, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1734, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1738, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x173c, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1740, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1744, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1748, 0xffffffff,	0x0,            0xffff,     0x0,        1},
+	{0x174c, 0xffffffff,	0x0,            0xffff,     0x0,        1},
+	{0x1750, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1754, 0xffffffff,	0x0,            0xffffffff, 0x0,        1},
+	{0x1758, 0xffffffff,	0x0,            0xffffffff, 0x0,        1},
+	{0x175c, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1760, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1764, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1768, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x176c, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1770, 0xffffffff,	0x0,            0xffff,     0x0,        1},
+	{0x1774, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1778, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x177c, 0xffffffff,	0x0,            0xffffffff, 0x0,        1},
+	{0x1780, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1784, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1788, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x178c, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1790, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1794, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x1798, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x179c, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x17a0, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x17a4, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x17a8, 0xffffffff,	0x0,            0xffffff,   0x0,        1},
+	{0x17ac, 0xffffffff,	0x0,            0xffff,     0x0,        1},
+	{0x17b0, 0xffffffff,	0x0,            0xffff,     0x0,        1},
+	{0x17b4, 0xffffffff,	0x0,            0xffff,     0x0,        1},
+	{0x17b8, 0xffffffff,	0x0,            0xffff,     0x0,        1},
+	{0x17bc, 0xffffffff,	0x0,            0xffffffff, 0x0,        1},
+	{0x17c0, 0xffffffff,	0x0,            0xffffffff, 0x0,        1},
+	{0xffff, 0, 0, 0, 0, 0},
+};
+
+static int alx_diag_register(struct alx_adapter *adpt, u64 *data)
+{
+	struct alx_hw *hw = &adpt->hw;
+	struct alx_reg_attr *preg, *oreg;
+	u32 val, old;
+
+	switch (ALX_DID(hw)) {
+	case ALX_DEV_ID_AR8161:
+	case ALX_DEV_ID_AR8162:
+	case ALX_DEV_ID_AR8171:
+	case ALX_DEV_ID_AR8172:
+		oreg = ALX_REV_B0 == ALX_REVID(hw) ?
+			ar816x_regs_b : ar816x_regs_a;
+		break;
+	default:
+		/* unknow type */
+		*data = 1;
+		return -EIO;
+	}
+
+	/* issue a MAC-reset */
+	ALX_MEM_W32(hw, ALX_MASTER, ALX_MASTER_DMA_MAC_RST);
+	msleep(50);
+
+	/* check reset value */
+	preg = oreg;
+	while (preg->reg != 0xffff) {
+		if (preg->rst_affect) {
+			ALX_MEM_R32(hw, preg->reg, &val);
+			if (val != preg->rst_val) {
+				netif_err(adpt, hw, adpt->netdev,
+					  "register %X, hard-rst:%X, read-val:%X\n",
+					  preg->reg, preg->rst_val, val);
+				*data = 2;
+				return -EIO;
+			}
+		}
+		preg++;
+	}
+
+	/* check read-clear/read-write attribute */
+	preg = oreg;
+
+	while (preg->reg != 0xffff) {
+		ALX_MEM_R32(hw, preg->reg, &old);
+
+		/* read clear */
+		if (preg->rc_mask) {
+			u32 v2;
+
+			msleep(20);
+			ALX_MEM_R32(hw, preg->reg, &v2);
+			if ((v2 & preg->rc_mask) != 0) {
+				netif_err(adpt, hw, adpt->netdev,
+					  "register %X, RC-mask:%X, Old:%X, New:%X\n",
+					  preg->reg, preg->rc_mask, old, v2);
+				*data = 3;
+				return -EIO;
+			}
+		}
+
+		/* read/write */
+		ALX_MEM_W32(hw, preg->reg, 0xffffffff & preg->rw_mask);
+		ALX_MEM_FLUSH(hw);
+		ALX_MEM_R32(hw, preg->reg, &val);
+		if ((val & preg->rw_mask) != preg->rw_mask) {
+			netif_err(adpt, hw, adpt->netdev,
+				  "register %X, RW-mask:%X, val-1:%X\n",
+					  preg->reg, preg->rw_mask, val);
+			*data = 4;
+			return -EIO;
+		}
+		ALX_MEM_W32(hw, preg->reg, 0);
+		ALX_MEM_FLUSH(hw);
+		ALX_MEM_R32(hw, preg->reg, &val);
+		if ((val & preg->rw_mask) != 0) {
+			netif_err(adpt, hw, adpt->netdev,
+				  "register %X, RW-mask:%X, val-0:%X\n",
+					  preg->reg, preg->rw_mask, val);
+			*data = 4;
+			return -EIO;
+		}
+
+		/* restore */
+		ALX_MEM_W32(hw, preg->reg, old);
+
+		preg++;
+	}
+
+	return 0;
+}
+
+static int alx_diag_sram(struct alx_adapter *adpt, u64 *data)
+{
+	struct alx_hw *hw = &adpt->hw;
+	u32 ret[2];
+	int i, err;
+
+	err = alx_reset_mac(hw);
+	if (err) {
+		netif_err(adpt, hw, adpt->netdev, "reset_mac fail %d\n", err);
+		*data = 1;
+		goto out;
+	}
+	/* issue bist command */
+	ALX_MEM_W32(hw, ALX_BIST0, ALX_BIST0_START);
+	ALX_MEM_W32(hw, ALX_BIST1, ALX_BIST1_START);
+
+	/* wait for 100ms */
+	ret[1] = ret[0] = 0;
+	for (i = 0; i < 5; i++) {
+		msleep(20);
+		ALX_MEM_R32(hw, ALX_BIST0, &ret[0]);
+		ALX_MEM_R32(hw, ALX_BIST1, &ret[1]);
+		if (ret[0] & ALX_BIST0_START  || ret[1] & ALX_BIST1_START)
+			continue;
+		else
+			break;
+	}
+
+	for (i = 0; i < 2; i++) {
+		if (ret[i] & ALX_BIST0_START) {
+			netif_err(adpt, hw, adpt->netdev,
+				  "sram(%d) bist not complete(%X)!\n",
+				  i, ret[i]);
+			*data = 2;
+			err = -EIO;
+			goto out;
+		}
+		if (ret[i] & ALX_BIST0_FAIL) {
+			netif_err(adpt, hw, adpt->netdev,
+				  "sram(%d) bist fail(%X)!\n",
+				  i, ret[i]);
+			*data = 3;
+			err = -EIO;
+			goto out;
+		}
+	}
+out:
+	return err;
+}
+
+static int alx_diag_reset(struct alx_adapter *adpt)
+{
+	struct alx_hw *hw = &adpt->hw;
+	int err;
+
+	alx_reset_pcie(hw);
+	alx_reset_phy(hw, !hw->hib_patch);
+	err = alx_reset_mac(hw);
+	if (!err)
+		err = alx_setup_speed_duplex(hw, hw->adv_cfg, hw->flowctrl);
+
+	if (err) {
+		netif_err(adpt, hw, adpt->netdev, "alx_diag_reset err %X\n",
+			  err);
+	}
+
+	return err;
+}
+
+static int alx_diag_link(struct alx_adapter *adpt, u64 *data)
+{
+	struct alx_hw *hw = &adpt->hw;
+	u32 flags, ethadv;
+	u16 speed;
+	u8 fc;
+	int i, err;
+
+	ethadv = ADVERTISED_Autoneg;
+	flags = adpt->eth_pflags & ALX_ETH_PF_LNK_MASK;
+	if (flags == 0)
+		flags = ALX_ETH_PF_LNK_MASK;
+	if (flags & ALX_ETH_PF_LNK_10MH)
+		ethadv |= ADVERTISED_10baseT_Half;
+	if (flags & ALX_ETH_PF_LNK_10MF)
+		ethadv |= ADVERTISED_10baseT_Full;
+	if (flags & ALX_ETH_PF_LNK_100MH)
+		ethadv |= ADVERTISED_100baseT_Half;
+	if (flags & ALX_ETH_PF_LNK_100MF)
+		ethadv |= ADVERTISED_100baseT_Full;
+	if (flags & ALX_ETH_PF_LNK_1000MF)
+		ethadv |= ADVERTISED_1000baseT_Full;
+
+	fc = ALX_FC_ANEG | ALX_FC_RX | ALX_FC_TX;
+
+	alx_reset_phy(hw, !hw->hib_patch);
+	err = alx_setup_speed_duplex(hw, ethadv, fc);
+	if (err) {
+		netif_err(adpt, hw, adpt->netdev,
+			  "config PHY speed/duplex failed, adv=%X,err=%d\n",
+			  ethadv, err);
+			  *data = 1;
+			goto out;
+	}
+
+	/* wait for linkup */
+	for (i = 0; i < ALX_MAX_SETUP_LNK_CYCLE; i++) {
+		bool link_up;
+
+		msleep(100);
+		err = alx_get_phy_link(hw, &link_up, &speed);
+		if (err) {
+			netif_err(adpt, hw, adpt->netdev,
+				  "get PHY speed/duplex failed,err=%d\n",
+				  err);
+			*data = 2;
+			goto out;
+		}
+		if (link_up)
+			break;
+	}
+	if (i == ALX_MAX_SETUP_LNK_CYCLE) {
+		err = ALX_LINK_TIMEOUT;
+		netif_err(adpt, hw, adpt->netdev,
+			  "get PHY speed/duplex timeout.\n");
+		*data = 3;
+		goto out;
+	}
+
+	netif_info(adpt, hw, adpt->netdev, "link:%s\n", speed_desc(speed));
+
+out:
+	return err;
+}
+
+static int alx_diag_interrupt(struct alx_adapter *adpt, u64 *data)
+{
+
+	return 0;
+}
+
+
+static int alx_diag_loopback(struct alx_adapter *adpt, u64 *data, bool phy_lpbk)
+{
+	return 0;
+}
+
+static void alx_self_test(struct net_device *netdev,
+			  struct ethtool_test *etest,
+			  u64 *data)
+{
+	struct alx_adapter *adpt = netdev_priv(netdev);
+	bool if_running = netif_running(netdev);
+	bool phy_lpback = etest->flags & ETH_TEST_FL_EXTERNAL_LB;
+
+	ALX_FLAG_SET(adpt, TESTING);
+	memset(data, 0, sizeof(u64) * ALX_TEST_LEN);
+
+	if (if_running)
+		dev_close(netdev);
+
+	if (etest->flags == ETH_TEST_FL_OFFLINE) {
+		netif_info(adpt, hw, adpt->netdev,  "offline test start...\n");
+
+		if (alx_diag_register(adpt, &data[0]))
+			etest->flags |= ETH_TEST_FL_FAILED;
+
+		if (alx_diag_sram(adpt, &data[1]))
+			etest->flags |= ETH_TEST_FL_FAILED;
+
+		if (alx_diag_interrupt(adpt, &data[2]))
+			etest->flags |= ETH_TEST_FL_FAILED;
+
+		if (phy_lpback)
+			etest->flags |= ETH_TEST_FL_EXTERNAL_LB_DONE;
+		if (alx_diag_loopback(adpt, &data[3], phy_lpback))
+			etest->flags |= ETH_TEST_FL_FAILED;
+
+	} else {
+		netif_info(adpt, hw, adpt->netdev,  "online test start...\n");
+
+		if (alx_diag_link(adpt, &data[4]))
+			etest->flags |= ETH_TEST_FL_FAILED;
+	}
+
+	ALX_FLAG_CLEAR(adpt, TESTING);
+	alx_diag_reset(adpt);
+
+	if (if_running)
+		dev_open(netdev);
+}
+
+static void alx_get_ethtool_stats(struct net_device *netdev,
+				  struct ethtool_stats *estats, u64 *data)
+{
+	struct alx_adapter *adpt = netdev_priv(netdev);
+	struct alx_hw *hw = &adpt->hw;
+
+	spin_lock(&adpt->smb_lock);
+
+	__alx_update_hw_stats(hw);
+	memcpy(data, &hw->stats, sizeof(hw->stats));
+
+	spin_unlock(&adpt->smb_lock);
+}
+
+static u32 alx_get_priv_flags(struct net_device *netdev)
+{
+	struct alx_adapter *adpt = netdev_priv(netdev);
+
+	return adpt->eth_pflags;
+}
+
+static int alx_set_priv_flags(struct net_device *netdev, u32 flags)
+{
+	struct alx_adapter *adpt = netdev_priv(netdev);
+
+	adpt->eth_pflags = flags;
+
+	return 0;
+}
+
+static void alx_get_drvinfo(struct net_device *netdev,
+			    struct ethtool_drvinfo *drvinfo)
+{
+	struct alx_adapter *adpt = netdev_priv(netdev);
+
+	strlcpy(drvinfo->driver, alx_drv_name, sizeof(drvinfo->driver));
+	strlcpy(drvinfo->version, alx_drv_version, sizeof(drvinfo->version));
+	strlcpy(drvinfo->fw_version, "N/A", sizeof(drvinfo->fw_version));
+	strlcpy(drvinfo->bus_info, pci_name(adpt->pdev),
+		sizeof(drvinfo->bus_info));
+	drvinfo->n_stats = ALX_STATS_LEN;
+	drvinfo->testinfo_len = ALX_TEST_LEN;
+	drvinfo->n_priv_flags = 5;
+	drvinfo->regdump_len = alx_get_regs_len(netdev);
+	drvinfo->eedump_len = 0;
+}
 
 static const struct ethtool_ops alx_ethtool_ops = {
 	.get_settings    = alx_get_settings,
@@ -343,6 +957,12 @@ static const struct ethtool_ops alx_ethtool_ops = {
 	.set_msglevel    = alx_set_msglevel,
 	.nway_reset      = alx_nway_reset,
 	.get_link        = ethtool_op_get_link,
+	.get_strings	 = alx_get_strings,
+	.get_sset_count	 = alx_get_sset_count,
+	.get_ethtool_stats = alx_get_ethtool_stats,
+	.self_test	 = alx_self_test,
+	.get_priv_flags	 = alx_get_priv_flags,
+	.set_priv_flags	 = alx_set_priv_flags,
 };
 
 void __devinit alx_set_ethtool_ops(struct net_device *dev)
