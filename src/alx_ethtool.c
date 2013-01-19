@@ -19,10 +19,12 @@
 #include <linux/etherdevice.h>
 #include <linux/ethtool.h>
 #include <linux/mdio.h>
+#include <linux/interrupt.h>
 
 #include "alx_reg.h"
 #include "alx_hw.h"
 #include "alx.h"
+
 
 static int alx_get_settings(struct net_device *netdev,
 			    struct ethtool_cmd *ecmd)
@@ -839,12 +841,270 @@ out:
 	return err;
 }
 
-static int alx_diag_interrupt(struct alx_adapter *adpt, u64 *data)
+static irqreturn_t alx_diag_msix_isr(int irq, void *data)
 {
+	struct alx_adapter *adpt = data;
+	struct alx_hw *hw = &adpt->hw;
+	u32 intr;
+	int i, vect = -1;
 
-	return 0;
+	for (i = 0; i < adpt->nr_vec; i++)
+		if (irq == adpt->msix_ent[i].vector) {
+			vect = i;
+			break;
+		}
+	if (vect == -1) {
+		netdev_err(adpt->netdev, "vector not found irq=%d\n", irq);
+		goto err_out;
+	}
+	if (adpt->eth_diag_vect != vect) {
+		netdev_err(adpt->netdev, "wrong msix interrupt, irq=%d\n", irq);
+		goto err_out;
+	}
+
+	alx_mask_msix(hw, vect, true);
+
+	ALX_MEM_R32(hw, ALX_ISR, &intr);
+	ALX_MEM_W32(hw, ALX_ISR, intr);
+
+	alx_mask_msix(hw, vect, false);
+
+	adpt->eth_diag_cnt++;
+	return IRQ_HANDLED;
+
+err_out:
+
+	ALX_MEM_W32(hw, ALX_IMR, 0);
+	return IRQ_HANDLED;
 }
 
+static irqreturn_t alx_diag_msi_isr(int irq, void *data)
+{
+	struct alx_adapter *adpt = data;
+	struct alx_hw *hw = &adpt->hw;
+	u32 intr;
+
+	ALX_MEM_R32(hw, ALX_ISR, &intr);
+	ALX_MEM_W32(hw, ALX_ISR, intr | ALX_ISR_DIS);
+	ALX_MEM_W32(hw, ALX_ISR, 0);
+
+	if (intr & ALX_ISR_MANU)
+		adpt->eth_diag_cnt++;
+
+	return IRQ_HANDLED;
+}
+
+static irqreturn_t alx_diag_intx_isr(int irq, void *data)
+{
+	struct alx_adapter *adpt = data;
+	struct alx_hw *hw = &adpt->hw;
+	u32 intr;
+
+	/* read interrupt status */
+	ALX_MEM_R32(hw, ALX_ISR, &intr);
+	if (intr & ALX_ISR_DIS)
+		return IRQ_NONE;
+
+	ALX_MEM_W32(hw, ALX_ISR, intr | ALX_ISR_DIS);
+	ALX_MEM_W32(hw, ALX_ISR, 0);
+
+	if (intr & ALX_ISR_MANU)
+		adpt->eth_diag_cnt++;
+
+	return IRQ_HANDLED;
+}
+
+static int alx_diag_msix(struct alx_adapter *adpt)
+{
+	struct alx_hw *hw = &adpt->hw;
+	char irq_lbl[IFNAMSIZ];
+	int test_vect, i = 0, err = 0;
+	u32 val;
+
+	alx_init_intr(adpt);
+	if (!ALX_FLAG(adpt, USING_MSIX))
+		goto out;
+
+	ALX_MEM_W32(hw, ALX_MSI_RETRANS_TIMER,
+		    FIELDX(ALX_MSI_RETRANS_TM, 100));
+	ALX_MEM_W32(hw, ALX_MSI_ID_MAP, 0);
+	ALX_MEM_W32(hw, ALX_ISR, ALX_ISR_DIS);
+	ALX_MEM_W32(hw, ALX_IMR, ALX_ISR_MANU);
+
+	for (i = 0; i < adpt->nr_vec; i++) {
+		sprintf(irq_lbl, "%s-test-%d", adpt->netdev->name, i);
+		err = request_irq(adpt->msix_ent[i].vector, alx_diag_msix_isr,
+				  0, irq_lbl, adpt);
+		if (err)
+			goto out;
+	}
+
+	for (test_vect = 0; test_vect < adpt->nr_vec; test_vect++) {
+		u32 tbl[2];
+		u32 other_vec = test_vect + 1;
+
+		ALX_MEM_W32(hw, ALX_ISR, ALX_ISR_DIS);
+
+		if (other_vec >= adpt->nr_vec)
+			other_vec = 0;
+		other_vec |= other_vec << 4;
+		other_vec |= other_vec << 8;
+		other_vec |= other_vec << 16;
+		tbl[1] = other_vec;
+		tbl[0] = (other_vec & 0x0FFFFFFF) | ((u32)test_vect << 28);
+		ALX_MEM_W32(hw, ALX_MSI_MAP_TBL1, tbl[0]);
+		ALX_MEM_W32(hw, ALX_MSI_MAP_TBL2, tbl[1]);
+		ALX_MEM_W32(hw, ALX_ISR, 0);
+		ALX_MEM_FLUSH(hw);
+
+		adpt->eth_diag_vect = test_vect;
+		adpt->eth_diag_cnt = 0;
+		/* issue a manual interrupt */
+		ALX_MEM_R32(hw, ALX_MASTER, &val);
+		val |= ALX_MASTER_MANU_INT;
+		ALX_MEM_W32(hw, ALX_MASTER, val);
+
+		/* wait for 50ms */
+		msleep(50);
+		if (adpt->eth_diag_cnt != 1) {
+			err = -EIO;
+			goto out;
+		}
+	}
+
+out:
+	ALX_MEM_W32(hw, ALX_ISR, ALX_ISR_DIS);
+	ALX_MEM_W32(hw, ALX_IMR, 0);
+	for (i--; i >= 0; i--) {
+		synchronize_irq(adpt->msix_ent[i].vector);
+		free_irq(adpt->msix_ent[i].vector, adpt);
+	}
+	alx_disable_advanced_intr(adpt);
+
+	return err;
+}
+
+
+static int alx_diag_msi(struct alx_adapter *adpt)
+{
+	struct alx_hw *hw = &adpt->hw;
+	struct pci_dev *pdev = adpt->pdev;
+	unsigned long cap = hw->capability;
+	u32 val;
+	bool irq_installed = false;
+	int err = 0;
+
+	ALX_CAP_CLEAR(hw, MSIX);
+	alx_init_intr(adpt);
+	if (!ALX_FLAG(adpt, USING_MSI))
+		goto out;
+
+	pci_disable_msix(pdev);
+	ALX_MEM_W32(hw, ALX_MSI_RETRANS_TIMER,
+		    FIELDX(ALX_MSI_RETRANS_TM, 100) | ALX_MSI_MASK_SEL_LINE);
+	ALX_MEM_W32(hw, ALX_ISR, ALX_ISR_DIS);
+	ALX_MEM_W32(hw, ALX_IMR, ALX_ISR_MANU);
+	err = request_irq(pdev->irq, alx_diag_msi_isr, 0,
+			  adpt->netdev->name, adpt);
+	if (err)
+		goto out;
+
+	irq_installed = true;
+	adpt->eth_diag_cnt = 0;
+	ALX_MEM_W32(hw, ALX_ISR, 0);
+	ALX_MEM_FLUSH(hw);
+	ALX_MEM_R32(hw, ALX_MASTER, &val);
+	val |= ALX_MASTER_MANU_INT;
+	ALX_MEM_W32(hw, ALX_MASTER, val);
+
+	/* wait for 50ms */
+	msleep(50);
+	if (adpt->eth_diag_cnt != 1) {
+		err = -EIO;
+		goto out;
+	}
+
+out:
+	ALX_MEM_W32(hw, ALX_ISR, ALX_ISR_DIS);
+	ALX_MEM_W32(hw, ALX_IMR, 0);
+	if (irq_installed) {
+		synchronize_irq(pdev->irq);
+		free_irq(pdev->irq, adpt);
+	}
+	alx_disable_advanced_intr(adpt);
+	hw->capability = cap;
+
+	return err;
+}
+
+static int alx_diag_intx(struct alx_adapter *adpt)
+{
+	struct alx_hw *hw = &adpt->hw;
+	struct pci_dev *pdev = adpt->pdev;
+	u32 val;
+	bool irq_installed = false;
+	int err = 0;
+
+	pci_disable_msix(pdev);
+	pci_disable_msi(pdev);
+	ALX_MEM_W32(hw, ALX_MSI_RETRANS_TIMER, 0);
+	ALX_MEM_W32(hw, ALX_ISR, ALX_ISR_DIS);
+	ALX_MEM_W32(hw, ALX_IMR, ALX_ISR_MANU);
+	err = request_irq(pdev->irq, alx_diag_intx_isr, IRQF_SHARED,
+			  adpt->netdev->name, adpt);
+	if (err)
+		goto out;
+
+	irq_installed = true;
+	adpt->eth_diag_cnt = 0;
+	ALX_MEM_W32(hw, ALX_ISR, 0);
+	ALX_MEM_FLUSH(hw);
+	ALX_MEM_R32(hw, ALX_MASTER, &val);
+	val |= ALX_MASTER_MANU_INT;
+	ALX_MEM_W32(hw, ALX_MASTER, val);
+
+	/* wait for 50ms */
+	msleep(50);
+	if (adpt->eth_diag_cnt != 1) {
+		err = -EIO;
+		goto out;
+	}
+
+out:
+	ALX_MEM_W32(hw, ALX_ISR, ALX_ISR_DIS);
+	ALX_MEM_W32(hw, ALX_IMR, 0);
+	if (irq_installed) {
+		synchronize_irq(pdev->irq);
+		free_irq(pdev->irq, adpt);
+	}
+	alx_disable_advanced_intr(adpt);
+
+	return err;
+}
+
+static int alx_diag_interrupt(struct alx_adapter *adpt, u64 *data)
+{
+	int err;
+
+	err = alx_diag_msix(adpt);
+	if (err) {
+		*data = 1;
+		goto out;
+	}
+	err = alx_diag_msi(adpt);
+	if (err) {
+		*data = 2;
+		goto out;
+	}
+	err = alx_diag_intx(adpt);
+	if (err) {
+		*data = 3;
+		goto out;
+	}
+
+out:
+	return err;
+}
 
 static int alx_diag_loopback(struct alx_adapter *adpt, u64 *data, bool phy_lpbk)
 {

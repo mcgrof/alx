@@ -177,6 +177,8 @@ struct alx_adapter {
 
 	/* ethtool private flags */
 	u32			eth_pflags;
+	int			eth_diag_vect;
+	int			eth_diag_cnt;
 };
 
 
@@ -189,6 +191,8 @@ struct alx_adapter {
 
 
 /* needed by alx_ethtool.c */
+extern void alx_init_intr(struct alx_adapter *adpt);
+extern void alx_disable_advanced_intr(struct alx_adapter *adpt);
 extern void alx_reinit(struct alx_adapter *adpt);
 extern void __devinit alx_set_ethtool_ops(struct net_device *dev);
 extern char alx_drv_name[];

@@ -33,7 +33,7 @@
 
 #define DRV_MAJ		1
 #define DRV_MIN		2
-#define DRV_PATCH	1
+#define DRV_PATCH	2
 #define DRV_MODULE_VER	\
 	__stringify(DRV_MAJ) "." __stringify(DRV_MIN) "." \
 	__stringify(DRV_PATCH)
@@ -859,7 +859,7 @@ static void alx_config_vector_mapping(struct alx_adapter *adpt)
 	ALX_MEM_W32(hw, ALX_MSI_ID_MAP, 0);
 }
 
-static void alx_disable_advanced_intr(struct alx_adapter *adpt)
+void alx_disable_advanced_intr(struct alx_adapter *adpt)
 {
 	alx_disable_msix(adpt);
 	alx_disable_msi(adpt);
@@ -1282,7 +1282,7 @@ static bool alx_enable_msix(struct alx_adapter *adpt)
 	return true;
 }
 
-static void alx_init_intr(struct alx_adapter *adpt)
+void alx_init_intr(struct alx_adapter *adpt)
 {
 	struct alx_hw *hw = &adpt->hw;
 
