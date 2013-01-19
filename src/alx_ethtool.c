@@ -1284,8 +1284,8 @@ static int alx_diag_rx_pkt(struct alx_adapter *adpt, int rx_qidx,
 	qnum = FIELD_GETX(rrd->word2, RRD_RSSQ) % adpt->nr_rxq;
 	if (rx_qidx != qnum) {
 		netif_err(adpt, rx_err, adpt->netdev,
-			  "rx Q-number is wrong (%d:%d), w2=%X\n",
-			  rx_qidx, qnum, rrd->word2);
+			  "rx Q-number is wrong (%d:%d), hash=%X,w2=%X\n",
+			  rx_qidx, qnum, rrd->rss_hash, rrd->word2);
 		return -4;
 	}
 

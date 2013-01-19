@@ -1293,7 +1293,7 @@ void alx_init_intr(struct alx_adapter *adpt)
 			ALX_FLAG_SET(adpt, USING_MSIX);
 	}
 	if (!ALX_FLAG(adpt, USING_MSIX)) {
-		adpt->nr_txq = ALX_CAP(hw, MTQ) ? ALX_MAX_TX_QUEUES : 1;
+		adpt->nr_txq = 1;
 		adpt->nr_rxq = 1;
 		adpt->nr_napi = 1;
 		adpt->nr_vec = 1;
