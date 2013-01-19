@@ -765,11 +765,8 @@ int alx_pre_suspend(struct alx_hw *hw, u16 speed)
 	if (speed >= SPEED_1000)
 		FIELD_SET32(mac, ALX_MAC_CTRL_SPEED, ALX_MAC_CTRL_SPEED_1000);
 	phy |= ALX_PHY_CTRL_DSPRST_OUT;
-	if (hw->sleep_ctrl & ALX_SLEEP_WOL_PHY)
-		err = alx_write_phy_reg(hw, ALX_MII_IER, ALX_IER_LINK_UP);
-	if (!err)
-		err = alx_write_phy_ext(hw, ALX_MIIEXT_ANEG,
-			ALX_MIIEXT_S3DIG10, ALX_MIIEXT_S3DIG10_SL);
+	err = alx_write_phy_ext(hw, ALX_MIIEXT_ANEG,
+		ALX_MIIEXT_S3DIG10, ALX_MIIEXT_S3DIG10_SL);
 config_reg:
 
 	if (!err) {
@@ -1306,17 +1303,19 @@ int alx_select_powersaving_speed(struct alx_hw *hw, u16 *speed)
 		*speed = spd;
 		goto out;
 	}
-	if (lpa & LPA_100FULL)
-		*speed = SPEED_100 + FULL_DUPLEX;
-	else if (lpa & LPA_100HALF)
-		*speed = SPEED_100 + HALF_DUPLEX;
-	else if (lpa & LPA_10FULL)
+	if (lpa & LPA_10FULL)
 		*speed = SPEED_10 + FULL_DUPLEX;
-	else
+	else if (lpa & LPA_10HALF)
 		*speed = SPEED_10 + HALF_DUPLEX;
+	else if (lpa & LPA_100FULL)
+		*speed = SPEED_100 + FULL_DUPLEX;
+	else
+		*speed = SPEED_100 + HALF_DUPLEX;
 
 	if (*speed != spd) {
-
+		err = alx_write_phy_reg(hw, ALX_MII_IER, 0);
+		if (err)
+			goto out;
 		err = alx_setup_speed_duplex(hw,
 			ALX_SPEED_TO_ETHADV(*speed) | ADVERTISED_Autoneg,
 			ALX_FC_ANEG | ALX_FC_RX | ALX_FC_TX);
