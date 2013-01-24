@@ -174,9 +174,6 @@ struct alx_adapter {
 	u16			msg_enable;
 
 	unsigned long		flags;
-
-	/* ethtool private flags */
-	u32			eth_pflags;
 };
 
 
@@ -192,6 +189,6 @@ struct alx_adapter {
 extern void alx_reinit(struct alx_adapter *adpt);
 extern void __devinit alx_set_ethtool_ops(struct net_device *dev);
 extern char alx_drv_name[];
-extern char alx_drv_version[];
+
 
 #endif

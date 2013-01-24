@@ -315,58 +315,58 @@ struct rrd_desc {
 /* Statistics counters collected by the MAC */
 struct alx_hw_stats {
 	/* rx */
-	u64 rx_ok;
-	u64 rx_bcast;
-	u64 rx_mcast;
-	u64 rx_pause;
-	u64 rx_ctrl;
-	u64 rx_fcs_err;
-	u64 rx_len_err;
-	u64 rx_byte_cnt;
-	u64 rx_runt;
-	u64 rx_frag;
-	u64 rx_sz_64B;
-	u64 rx_sz_127B;
-	u64 rx_sz_255B;
-	u64 rx_sz_511B;
-	u64 rx_sz_1023B;
-	u64 rx_sz_1518B;
-	u64 rx_sz_max;
-	u64 rx_ov_sz;
-	u64 rx_ov_rxf;
-	u64 rx_ov_rrd;
-	u64 rx_align_err;
-	u64 rx_bc_byte_cnt;
-	u64 rx_mc_byte_cnt;
-	u64 rx_err_addr;
+	unsigned long rx_ok;
+	unsigned long rx_bcast;
+	unsigned long rx_mcast;
+	unsigned long rx_pause;
+	unsigned long rx_ctrl;
+	unsigned long rx_fcs_err;
+	unsigned long rx_len_err;
+	unsigned long rx_byte_cnt;
+	unsigned long rx_runt;
+	unsigned long rx_frag;
+	unsigned long rx_sz_64B;
+	unsigned long rx_sz_127B;
+	unsigned long rx_sz_255B;
+	unsigned long rx_sz_511B;
+	unsigned long rx_sz_1023B;
+	unsigned long rx_sz_1518B;
+	unsigned long rx_sz_max;
+	unsigned long rx_ov_sz;
+	unsigned long rx_ov_rxf;
+	unsigned long rx_ov_rrd;
+	unsigned long rx_align_err;
+	unsigned long rx_bc_byte_cnt;
+	unsigned long rx_mc_byte_cnt;
+	unsigned long rx_err_addr;
 
 	/* tx */
-	u64 tx_ok;
-	u64 tx_bcast;
-	u64 tx_mcast;
-	u64 tx_pause;
-	u64 tx_exc_defer;
-	u64 tx_ctrl;
-	u64 tx_defer;
-	u64 tx_byte_cnt;
-	u64 tx_sz_64B;
-	u64 tx_sz_127B;
-	u64 tx_sz_255B;
-	u64 tx_sz_511B;
-	u64 tx_sz_1023B;
-	u64 tx_sz_1518B;
-	u64 tx_sz_max;
-	u64 tx_single_col;
-	u64 tx_multi_col;
-	u64 tx_late_col;
-	u64 tx_abort_col;
-	u64 tx_underrun;
-	u64 tx_trd_eop;
-	u64 tx_len_err;
-	u64 tx_trunc;
-	u64 tx_bc_byte_cnt;
-	u64 tx_mc_byte_cnt;
-	u64 update;
+	unsigned long tx_ok;
+	unsigned long tx_bcast;
+	unsigned long tx_mcast;
+	unsigned long tx_pause;
+	unsigned long tx_exc_defer;
+	unsigned long tx_ctrl;
+	unsigned long tx_defer;
+	unsigned long tx_byte_cnt;
+	unsigned long tx_sz_64B;
+	unsigned long tx_sz_127B;
+	unsigned long tx_sz_255B;
+	unsigned long tx_sz_511B;
+	unsigned long tx_sz_1023B;
+	unsigned long tx_sz_1518B;
+	unsigned long tx_sz_max;
+	unsigned long tx_single_col;
+	unsigned long tx_multi_col;
+	unsigned long tx_late_col;
+	unsigned long tx_abort_col;
+	unsigned long tx_underrun;
+	unsigned long tx_trd_eop;
+	unsigned long tx_len_err;
+	unsigned long tx_trunc;
+	unsigned long tx_bc_byte_cnt;
+	unsigned long tx_mc_byte_cnt;
+	unsigned long update;
 };
 
 #define SPEED_0			0
@@ -381,19 +381,6 @@ struct alx_hw_stats {
 (_speed) == SPEED_10 + FULL_DUPLEX ? ADVERTISED_10baseT_Full :		\
 (_speed) == SPEED_10 + HALF_DUPLEX ? ADVERTISED_10baseT_Half :		\
 0)
-
-#define speed_desc(_s) (\
-	(_s) == SPEED_1000 + FULL_DUPLEX ? \
-	"1 Gbps Full" : \
-	(_s) == SPEED_100 + FULL_DUPLEX ? \
-	"100 Mbps Full" : \
-	(_s) == SPEED_100 + HALF_DUPLEX ? \
-	"100 Mbps Half" : \
-	(_s) == SPEED_10 + FULL_DUPLEX ? \
-	"10 Mbps Full" : \
-	(_s) == SPEED_10 + HALF_DUPLEX ? \
-	"10 Mbps Half" : \
-	"Unknown speed")
 
 /* for FlowControl */
 #define ALX_FC_RX		0x01
@@ -563,52 +550,26 @@ enum ALX_CAPS {
 #define ALX_CAP_CLEAR(_hw, _cap) (\
 	clear_bit(ALX_CAP_##_cap, &(_hw)->capability))
 
-#define ALX_READ_ISSUE_FIXED	1
-
 /* write to 8bit register via pci memory space */
 #define ALX_MEM_W8(s, reg, val) (writeb((val), ((s)->hw_addr + reg)))
 
 /* read from 8bit register via pci memory space */
-#if ALX_READ_ISSUE_FIXED
 #define ALX_MEM_R8(s, reg, pdat) (\
 		*(u8 *)(pdat) = readb((s)->hw_addr + reg))
-#else
-#define ALX_MEM_R8(s, reg, pdat) do { \
-		if (!(s)->link_up) \
-			readl((s)->hw_addr + ((reg) & 0xFFFC)); \
-		*(u8 *)(pdat) = readb((s)->hw_addr + reg);\
-	} while (0)
-#endif
 
 /* write to 16bit register via pci memory space */
 #define ALX_MEM_W16(s, reg, val) (writew((val), ((s)->hw_addr + reg)))
 
 /* read from 16bit register via pci memory space */
-#if ALX_READ_ISSUE_FIXED
 #define ALX_MEM_R16(s, reg, pdat) (\
 		*(u16 *)(pdat) = readw((s)->hw_addr + reg))
-#else
-#define ALX_MEM_R16(s, reg, pdat) do { \
-		if (!(s)->link_up) \
-			readl((s)->hw_addr + ((reg) & 0xFFFC)); \
-		*(u16 *)(pdat) = readw((s)->hw_addr + reg); \
-	} while (0)
-#endif
 
 /* write to 32bit register via pci memory space */
 #define ALX_MEM_W32(s, reg, val) (writel((val), ((s)->hw_addr + reg)))
 
 /* read from 32bit register via pci memory space */
-#if ALX_READ_ISSUE_FIXED
 #define ALX_MEM_R32(s, reg, pdat) (\
 		*(u32 *)(pdat) = readl((s)->hw_addr + reg))
-#else
-#define ALX_MEM_R32(s, reg, pdat) do { \
-		if (!(s)->link_up) \
-			readl((s)->hw_addr + (reg)); \
-		*(u32 *)(pdat) = readl((s)->hw_addr + reg); \
-	} while (0)
-#endif
 
 /* read from 16bit register via pci config space */
 #define ALX_CFG_R16(s, reg, pdat) (\
