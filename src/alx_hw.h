@@ -655,7 +655,7 @@ struct alx_platform_patch {
 #define ALX_PF_ANY_REV		0x10000
 
 
-void __devinit alx_patch_assign(struct alx_hw *hw);
-bool __devinit alx_get_phy_info(struct alx_hw *hw);
+void alx_patch_assign(struct alx_hw *hw);
+bool alx_get_phy_info(struct alx_hw *hw);
 
 #endif

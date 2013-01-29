@@ -1416,12 +1416,12 @@ void __alx_update_hw_stats(struct alx_hw *hw)
 	}
 }
 
-static const struct alx_platform_patch plats[] __devinitdata = {
+static const struct alx_platform_patch plats[] = {
 {0x1091, 0x00, 0x1969, 0x0091, 0x1001},
 {0},
 };
 
-void __devinit alx_patch_assign(struct alx_hw *hw)
+void alx_patch_assign(struct alx_hw *hw)
 {
 	int i = 0;
 
@@ -1440,7 +1440,7 @@ void __devinit alx_patch_assign(struct alx_hw *hw)
 	}
 }
 
-bool __devinit alx_get_phy_info(struct alx_hw *hw)
+bool alx_get_phy_info(struct alx_hw *hw)
 {
 	u16  devs1, devs2;
 
