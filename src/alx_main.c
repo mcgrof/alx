@@ -26,6 +26,8 @@
 #include <linux/bitops.h>
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
+#include <linux/vmalloc.h>
+#include <net/ip6_checksum.h>
 
 #include "alx_reg.h"
 #include "alx_hw.h"
