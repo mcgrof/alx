@@ -328,7 +328,7 @@ static int alx_nway_reset(struct net_device *netdev)
 	struct alx_adapter *adpt = netdev_priv(netdev);
 
 	if (netif_running(netdev))
-		alx_reinit(adpt);
+		alx_reinit(adpt, false);
 
 	return 0;
 }

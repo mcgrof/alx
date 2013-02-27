@@ -205,7 +205,7 @@ extern int alx_alloc_rxring_buf(struct alx_adapter *adpt,
 				struct alx_rx_queue *rxq);
 extern void alx_init_intr(struct alx_adapter *adpt);
 extern void alx_disable_advanced_intr(struct alx_adapter *adpt);
-extern void alx_reinit(struct alx_adapter *adpt);
+extern void alx_reinit(struct alx_adapter *adpt, bool in_task);
 extern void alx_set_ethtool_ops(struct net_device *dev);
 extern char alx_drv_name[];
 extern char alx_drv_version[];
