@@ -402,7 +402,6 @@ int alx_alloc_rxring_buf(struct alx_adapter *adpt,
 			netdev_warn(adpt->netdev, "alloc skb failed\n");
 			break;
 		}
-		skb_reserve(skb, NET_IP_ALIGN);
 		dma = dma_map_single(rxq->dev,
 				     skb->data,
 				     adpt->rxbuf_size,
