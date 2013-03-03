@@ -994,7 +994,7 @@ static void alx_free_irq(struct alx_adapter *adpt)
 }
 
 
-static int __devinit alx_identify_hw(struct alx_adapter *adpt)
+static int alx_identify_hw(struct alx_adapter *adpt)
 {
 	struct pci_dev *pdev = adpt->pdev;
 	struct alx_hw *hw = &adpt->hw;
@@ -1039,7 +1039,7 @@ static int __devinit alx_identify_hw(struct alx_adapter *adpt)
 }
 
 
-static const u8 def_rss_key[40] __devinitdata = {
+static const u8 def_rss_key[40] = {
 	0xE2, 0x91, 0xD7, 0x3D, 0x18, 0x05, 0xEC, 0x6C,
 	0x2A, 0x94, 0xB3, 0x0D, 0xA5, 0x4F, 0x2B, 0xEC,
 	0xEA, 0x49, 0xAF, 0x7C, 0xE2, 0x14, 0xAD, 0x3D,
@@ -1066,7 +1066,7 @@ void alx_init_def_rss_idt(struct alx_adapter *adpt)
  *    initialize general software structure (struct alx_adapter).
  *    fields are inited based on PCI device information.
  */
-static int __devinit alx_init_sw(struct alx_adapter *adpt)
+static int alx_init_sw(struct alx_adapter *adpt)
 {
 	struct pci_dev	*pdev = adpt->pdev;
 	struct alx_hw *hw = &adpt->hw;
@@ -2466,7 +2466,7 @@ static const struct net_device_ops alx_netdev_ops = {
 };
 
 /* alx_probe - Device Initialization Routine */
-static int __devinit
+static int
 alx_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	struct net_device *netdev;
@@ -2677,7 +2677,7 @@ err_dma_mask:
 }
 
 /* alx_remove - Device Removal Routine */
-static void __devexit alx_remove(struct pci_dev *pdev)
+static void alx_remove(struct pci_dev *pdev)
 {
 	struct alx_adapter *adpt = pci_get_drvdata(pdev);
 	struct alx_hw *hw = &adpt->hw;
@@ -2797,7 +2797,7 @@ static struct pci_driver alx_driver = {
 	.name        = alx_drv_name,
 	.id_table    = alx_pci_tbl,
 	.probe       = alx_probe,
-	.remove      = __devexit_p(alx_remove),
+	.remove      = alx_remove,
 	.shutdown    = alx_shutdown,
 	.err_handler = &alx_err_handler,
 	.driver.pm   = ALX_PM_OPS,

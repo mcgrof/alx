@@ -1795,7 +1795,7 @@ static const struct ethtool_ops alx_ethtool_ops = {
 	.set_priv_flags	 = alx_set_priv_flags,
 };
 
-void __devinit alx_set_ethtool_ops(struct net_device *dev)
+void alx_set_ethtool_ops(struct net_device *dev)
 {
 	SET_ETHTOOL_OPS(dev, &alx_ethtool_ops);
 }
