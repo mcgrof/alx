@@ -57,6 +57,7 @@ static const char alx_drv_desc[] =
 	PCI_DEVICE(ALX_VENDOR_ID, device_id)}
 static DEFINE_PCI_DEVICE_TABLE(alx_pci_tbl) = {
 	ALX_ETHER_DEVICE(ALX_DEV_ID_AR8161),
+	ALX_ETHER_DEVICE(ALX_DEV_ID_E2200),
 	ALX_ETHER_DEVICE(ALX_DEV_ID_AR8162),
 	ALX_ETHER_DEVICE(ALX_DEV_ID_AR8171),
 	ALX_ETHER_DEVICE(ALX_DEV_ID_AR8172),
@@ -1010,6 +1011,7 @@ static int alx_identify_hw(struct alx_adapter *adpt)
 
 	switch (ALX_DID(hw)) {
 	case ALX_DEV_ID_AR8161:
+	case ALX_DEV_ID_E2200:
 	case ALX_DEV_ID_AR8162:
 	case ALX_DEV_ID_AR8171:
 	case ALX_DEV_ID_AR8172:
