@@ -731,6 +731,7 @@ static int alx_diag_register(struct alx_adapter *adpt, u64 *data)
 
 	switch (ALX_DID(hw)) {
 	case ALX_DEV_ID_AR8161:
+	case ALX_DEV_ID_E2200:
 	case ALX_DEV_ID_AR8162:
 	case ALX_DEV_ID_AR8171:
 	case ALX_DEV_ID_AR8172:
