@@ -1797,6 +1797,6 @@ static const struct ethtool_ops alx_ethtool_ops = {
 
 void alx_set_ethtool_ops(struct net_device *dev)
 {
-	SET_ETHTOOL_OPS(dev, &alx_ethtool_ops);
+	dev->ethtool_ops = &alx_ethtool_ops;
 }
 
